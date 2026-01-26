@@ -1,20 +1,34 @@
-# MCP Database Server
+# @adevguide/mcp-database-server
 
-> **Enterprise-grade Model Context Protocol server for unified SQL database access**
+[![npm version](https://img.shields.io/npm/v/%40adevguide%2Fmcp-database-server)](https://www.npmjs.com/package/@adevguide/mcp-database-server)
+[![npm downloads](https://img.shields.io/npm/dm/%40adevguide%2Fmcp-database-server)](https://www.npmjs.com/package/@adevguide/mcp-database-server)
 
-A production-ready MCP server that provides seamless, intelligent access to multiple SQL databases with automatic schema discovery, relationship mapping, and built-in security controls.
+Production-grade Model Context Protocol (MCP) server for unified SQL database access. Connect multiple databases through a single MCP server with schema discovery, relationship mapping, caching, and safety controls.
+
+- npm: https://www.npmjs.com/package/@adevguide/mcp-database-server
+- GitHub: https://github.com/iPraBhu/mcp-database-server
+
+## Contents
+
+- [Features](#features)
+- [Why this exists](#why-this-exists)
+- [Installation](#installation)
+- [Configuration](#configuration)
+- [MCP client integration](#mcp-client-integration)
 
 ## Features
 
-- 🗄️ **Multi-Database Support** - PostgreSQL, MySQL/MariaDB, SQLite, SQL Server, Oracle
-- 🔍 **Automatic Schema Discovery** - Tables, columns, indexes, foreign keys, and relationships
-- 💾 **Intelligent Caching** - Persistent schema cache with TTL and version management
-- 🔗 **Relationship Inference** - Automatic foreign key detection plus heuristic pattern matching
-- 📊 **Query Intelligence** - Execution tracking, statistics, and performance insights
-- 🎯 **Join Assistance** - Smart join path recommendations based on relationship graphs
-- 🔒 **Enterprise Security** - Read-only mode, operation controls, dangerous operation protection, secret redaction
-- ⚡ **High Performance** - Connection pooling, query timeouts, concurrent operation protection
-- 🌐 **Environment Flexibility** - Environment variable interpolation for secure configuration
+- Multi-database support: PostgreSQL, MySQL/MariaDB, SQLite, SQL Server, Oracle
+- Automatic schema discovery: tables, columns, indexes, foreign keys, relationships
+- Persistent schema caching: TTL + versioning, manual refresh, cache stats
+- Relationship inference: foreign keys + heuristics
+- Query intelligence: tracking, statistics, timeouts
+- Join assistance: suggested join paths based on relationship graphs
+- Safety controls: read-only mode, allow/deny write operations, secret redaction
+
+## Why this exists
+
+This project was originally vibe-coded to solve real issues I was facing when wiring LLM tools to multiple SQL databases (consistent connectivity, schema discovery, and safe query execution). It has since been hardened into a reusable MCP server with caching and security defaults.
 
 ## Architecture
 
@@ -54,34 +68,31 @@ A production-ready MCP server that provides seamless, intelligent access to mult
 
 ## Installation
 
-### Method 1: Install from npm (Recommended)
-
-If this package is published to npm:
+### Global install (recommended)
 
 ```bash
 npm install -g @adevguide/mcp-database-server
 ```
 
-Then you can run it directly:
+Run:
 
 ```bash
-mcp-database-server --config /path/to/your/config.json
+mcp-database-server --config /absolute/path/to/.mcp-database-server.config
 ```
 
-### Method 2: Install from source
+### Run via npx (no global install)
 
-Clone and build the project:
+```bash
+npx -y @adevguide/mcp-database-server --config /absolute/path/to/.mcp-database-server.config
+```
+
+### Install from source
 
 ```bash
 git clone https://github.com/iPraBhu/mcp-database-server.git
 cd mcp-database-server
 npm install
 npm run build
-```
-
-Then run it:
-
-```bash
 node dist/index.js --config ./.mcp-database-server.config
 ```
 
