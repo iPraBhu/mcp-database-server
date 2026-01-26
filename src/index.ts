@@ -2,13 +2,24 @@
 
 import dotenv from 'dotenv';
 import { parseArgs } from 'util';
-import { loadConfig } from './config.js';
+import { readFileSync } from 'fs';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
+import { loadConfig, findConfigFile } from './config.js';
 import { DatabaseManager } from './database-manager.js';
 import { MCPServer } from './mcp-server.js';
 import { initLogger, getLogger } from './logger.js';
 
 // Load environment variables
 dotenv.config();
+
+// Get package version
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+const packageJson = JSON.parse(
+  readFileSync(join(__dirname, '../package.json'), 'utf-8')
+);
+const version = packageJson.version;
 
 async function main() {
   try {
@@ -18,43 +29,70 @@ async function main() {
         config: {
           type: 'string',
           short: 'c',
-          default: './sql-mcp.config.json',
+          default: './.mcp-database-server.config',
         },
         help: {
           type: 'boolean',
           short: 'h',
         },
+        version: {
+          type: 'boolean',
+          short: 'v',
+        },
       },
     });
 
+    if (values.version) {
+      console.log(version);
+      process.exit(0);
+    }
+
     if (values.help) {
       console.log(`
-sql-mcp - Model Context Protocol Server for SQL Databases
+mcp-database-server - Model Context Protocol Server for SQL Databases
 
 Usage:
-  sql-mcp [options]
+  mcp-database-server [options]
 
 Options:
-  -c, --config <path>  Path to configuration file (default: ./sql-mcp.config.json)
+  -c, --config <path>  Path to configuration file (default: ./.mcp-database-server.config)
   -h, --help          Show this help message
+  -v, --version       Show version number
 
 Configuration:
   The config file should be a JSON file with database configurations.
-  See sql-mcp.config.json.example for reference.
+  See mcp-database-server.config.example for reference.
 
 Environment Variables:
   You can use environment variable interpolation in the config file:
   Example: "url": "\${DB_URL_POSTGRES}"
 
 Examples:
-  sql-mcp --config ./my-config.json
-  sql-mcp -c ./config/production.json
+  mcp-database-server --config ./my-config.json
+  mcp-database-server -c ./config/production.json
       `);
       process.exit(0);
     }
 
     // Load configuration
-    const configPath = values.config as string;
+    let configPath = values.config as string;
+    
+    // If config path is the default, try to find it by traversing up
+    if (configPath === './.mcp-database-server.config') {
+      const foundPath = findConfigFile('.mcp-database-server.config');
+      if (foundPath) {
+        configPath = foundPath;
+      } else {
+        console.error('Error: Config file .mcp-database-server.config not found');
+        console.error('Searched in current directory and all parent directories');
+        console.error('\nTo create a config file:');
+        console.error('  cp mcp-database-server.config.example .mcp-database-server.config');
+        console.error('\nOr specify a custom path:');
+        console.error('  mcp-database-server --config /path/to/config.json');
+        process.exit(1);
+      }
+    }
+    
     const config = await loadConfig(configPath);
 
     // Initialize logger
@@ -69,6 +107,7 @@ Examples:
       cacheTtlMinutes: config.cache?.ttlMinutes || 10,
       allowWrite: config.security?.allowWrite || false,
       allowedWriteOperations: config.security?.allowedWriteOperations,
+      disableDangerousOperations: config.security?.disableDangerousOperations ?? true,
     });
 
     await dbManager.init();

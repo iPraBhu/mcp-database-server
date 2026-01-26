@@ -1,11 +1,11 @@
 {
-  "name": "sql-mcp",
+  "name": "mcp-database-server",
   "version": "1.0.0",
   "description": "Model Context Protocol server for unified SQL database access with schema caching and relationship discovery",
   "type": "module",
   "main": "dist/index.js",
   "bin": {
-    "sql-mcp": "dist/index.js"
+    "mcp-database-server": "dist/index.js"
   },
   "scripts": {
     "build": "tsup",

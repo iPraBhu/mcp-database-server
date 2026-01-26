@@ -10,6 +10,7 @@ export interface DatabaseManagerOptions {
   cacheTtlMinutes: number;
   allowWrite: boolean;
   allowedWriteOperations?: string[];
+  disableDangerousOperations: boolean;
 }
 
 export class DatabaseManager {
@@ -157,6 +158,15 @@ export class DatabaseManager {
     if (isWriteOperation(sql)) {
       if (!this.options.allowWrite && !config?.readOnly === false) {
         throw new Error('Write operations are not allowed. Set allowWrite in config.');
+      }
+
+      // Check for dangerous operations (DELETE, TRUNCATE, DROP)
+      if (this.options.disableDangerousOperations) {
+        const operation = sql.trim().split(/\s+/)[0].toUpperCase();
+        const dangerousOps = ['DELETE', 'TRUNCATE', 'DROP'];
+        if (dangerousOps.includes(operation)) {
+          throw new Error(`Dangerous operation ${operation} is disabled. Set disableDangerousOperations: false in security config to allow.`);
+        }
       }
 
       // Check allowed operations

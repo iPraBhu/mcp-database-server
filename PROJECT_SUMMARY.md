@@ -150,9 +150,9 @@ This is a production-ready Model Context Protocol (MCP) server that provides uni
 ├── eslint.config.js        # Linting rules
 ├── .prettierrc             # Code formatting
 ├── .gitignore              # Git exclusions
-├── .env.example            # Environment template
-├── sql-mcp.config.json     # Sample configuration
-├── mcp.json.example        # MCP client config example
+├── .env.example                    # Environment template
+├── mcp-database-server.config.example # Sample configuration
+├── mcp.json.example                # MCP client config example
 ├── README.md               # Main documentation
 ├── QUICKSTART.md           # Quick start guide
 └── CHANGELOG.md            # Version history

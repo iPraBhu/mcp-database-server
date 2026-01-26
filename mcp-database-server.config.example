@@ -49,6 +49,7 @@
   "security": {
     "allowWrite": false,
     "allowedWriteOperations": ["INSERT", "UPDATE"],
+    "disableDangerousOperations": true,
     "redactSecrets": true
   },
   "logging": {

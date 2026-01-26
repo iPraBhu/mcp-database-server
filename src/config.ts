@@ -1,6 +1,38 @@
 import fs from 'fs/promises';
+import { existsSync } from 'fs';
+import { dirname, resolve, join } from 'path';
 import { ServerConfig, ServerConfigSchema, ConfigError } from './types.js';
 import { interpolateEnv } from './utils.js';
+
+/**
+ * Find config file by traversing up the directory tree
+ * @param fileName - Name of the config file to find
+ * @param startDir - Directory to start searching from (defaults to cwd)
+ * @returns Absolute path to config file or null if not found
+ */
+export function findConfigFile(fileName: string, startDir: string = process.cwd()): string | null {
+  let currentDir = resolve(startDir);
+
+  while (true) {
+    const configPath = join(currentDir, fileName);
+    
+    if (existsSync(configPath)) {
+      return configPath;
+    }
+
+    const parentDir = dirname(currentDir);
+    
+    // Reached filesystem root (parent equals current)
+    if (parentDir === currentDir) {
+      break;
+    }
+
+    // Move up one directory
+    currentDir = parentDir;
+  }
+
+  return null;
+}
 
 export async function loadConfig(configPath: string): Promise<ServerConfig> {
   try {

@@ -3,6 +3,7 @@ dist/
 .sql-mcp-cache/
 *.log
 .env
+.mcp-database-server.config
 .DS_Store
 coverage/
 *.db

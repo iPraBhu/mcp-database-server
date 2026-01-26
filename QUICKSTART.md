@@ -1,6 +1,6 @@
 # Quick Start Guide
 
-This guide will help you get up and running with sql-mcp in minutes.
+This guide will help you get up and running with mcp-database-server in minutes.
 
 ## Prerequisites
 
@@ -41,7 +41,7 @@ DB_URL_MYSQL=mysql://user:password@localhost:3306/dbname
 
 ### Step 2: Create Configuration File
 
-The repository includes a sample `sql-mcp.config.json`. Customize it for your needs:
+The repository includes a sample `mcp-database-server.config.json`. Customize it for your needs:
 
 ```json
 {
@@ -67,7 +67,7 @@ The repository includes a sample `sql-mcp.config.json`. Customize it for your ne
 Run a quick health check:
 
 ```bash
-node dist/index.js --config ./sql-mcp.config.json
+node dist/index.js --config ./.mcp-database-server.config
 ```
 
 Then use an MCP client to call the `health_check` tool.
@@ -84,12 +84,12 @@ Add to your Claude Desktop config file:
 ```json
 {
   "mcpServers": {
-    "sql-mcp": {
+    "mcp-database-server": {
       "command": "node",
       "args": [
-        "/absolute/path/to/sql-mcp/dist/index.js",
+        "/absolute/path/to/mcp-database-server/dist/index.js",
         "--config",
-        "/absolute/path/to/sql-mcp.config.json"
+        "/absolute/path/to/.mcp-database-server.config"
       ]
     }
   }
@@ -164,7 +164,7 @@ INSERT INTO orders VALUES (3, 2, 49.99);
 EOF
 ```
 
-2. Configure sql-mcp.config.json:
+2. Configure .mcp-database-server.config:
 
 ```json
 {

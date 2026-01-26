@@ -21,7 +21,7 @@ export class MCPServer {
   ) {
     this.server = new Server(
       {
-        name: 'sql-mcp',
+        name: 'mcp-database-server',
         version: '1.0.0',
       },
       {

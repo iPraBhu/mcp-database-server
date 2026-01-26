@@ -1,17 +1,46 @@
-# SQL MCP Server
+# MCP Database Server
 
-A comprehensive Model Context Protocol (MCP) server that provides unified access to multiple SQL databases with automatic schema caching, relationship discovery, and intelligent query assistance.
+> **Enterprise-grade Model Context Protocol server for unified SQL database access**
+
+A production-ready MCP server that provides seamless, intelligent access to multiple SQL databases with automatic schema discovery, relationship mapping, and built-in security controls.
 
 ## Features
 
-- 🗄️ **Multi-Database Support**: PostgreSQL, MySQL/MariaDB, SQLite, SQL Server, Oracle (stub)
-- 🔍 **Automatic Schema Introspection**: Discovers tables, columns, indexes, foreign keys, and relationships
-- 💾 **Intelligent Caching**: Persistent schema cache with TTL and automatic invalidation
-- 🔗 **Relationship Discovery**: Automatic foreign key detection and heuristic relationship inference
-- 📊 **Query Tracking**: Maintains query history and execution statistics
-- 🎯 **Join Suggestions**: Intelligent join path recommendations based on relationship graph
-- 🔒 **Security**: Read-only mode, write operation controls, secret redaction
-- ⚡ **Performance**: Connection pooling, query timeouts, concurrent introspection protection
+- 🗄️ **Multi-Database Support** - PostgreSQL, MySQL/MariaDB, SQLite, SQL Server, Oracle
+- 🔍 **Automatic Schema Discovery** - Tables, columns, indexes, foreign keys, and relationships
+- 💾 **Intelligent Caching** - Persistent schema cache with TTL and version management
+- 🔗 **Relationship Inference** - Automatic foreign key detection plus heuristic pattern matching
+- 📊 **Query Intelligence** - Execution tracking, statistics, and performance insights
+- 🎯 **Join Assistance** - Smart join path recommendations based on relationship graphs
+- 🔒 **Enterprise Security** - Read-only mode, operation controls, dangerous operation protection, secret redaction
+- ⚡ **High Performance** - Connection pooling, query timeouts, concurrent operation protection
+- 🌐 **Environment Flexibility** - Environment variable interpolation for secure configuration
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                    MCP Client                            │
+│            (Claude Desktop, IDEs, etc.)                  │
+└────────────────┬────────────────────────────────────────┘
+                 │ JSON-RPC over stdio
+┌────────────────▼────────────────────────────────────────┐
+│                MCP Database Server                       │
+│  ┌──────────────────────────────────────────────────┐   │
+│  │           Schema Cache (TTL + Versioning)        │   │
+│  └──────────────────────────────────────────────────┘   │
+│  ┌──────────────────────────────────────────────────┐   │
+│  │  Query Tracker (History + Statistics)            │   │
+│  └──────────────────────────────────────────────────┘   │
+│  ┌──────────────────────────────────────────────────┐   │
+│  │  Security Layer (Read-only, Operation Controls)  │   │
+│  └──────────────────────────────────────────────────┘   │
+└────┬─────────┬─────────┬──────────┬──────────┬─────────┘
+     │         │         │          │          │
+┌────▼───┐ ┌──▼────┐ ┌──▼─────┐ ┌──▼──────┐ ┌▼────────┐
+│Postgres│ │ MySQL │ │ SQLite │ │ MSSQL   │ │ Oracle  │
+└────────┘ └───────┘ └────────┘ └─────────┘ └─────────┘
+```
 
 ## Supported Databases
 
@@ -25,14 +54,42 @@ A comprehensive Model Context Protocol (MCP) server that provides unified access
 
 ## Installation
 
+### Method 1: Install from npm (Recommended)
+
+If this package is published to npm:
+
 ```bash
+npm install -g mcp-database-server
+```
+
+Then you can run it directly:
+
+```bash
+mcp-database-server --config /path/to/your/config.json
+```
+
+### Method 2: Install from source
+
+Clone and build the project:
+
+```bash
+git clone https://github.com/iPraBhu/mcp-database-server.git
+cd mcp-database-server
 npm install
 npm run build
 ```
 
+Then run it:
+
+```bash
+node dist/index.js --config ./.mcp-database-server.config
+```
+
 ## Configuration
 
-Create a `sql-mcp.config.json` file:
+Create a `.mcp-database-server.config` file in your project root:
+
+> **Note:** The config file is automatically discovered! If you don't specify `--config`, the tool searches for `.mcp-database-server.config` starting in the current directory and traversing up parent directories until found. This means you can run the tool from any subdirectory of your project.
 
 ```json
 {
@@ -65,6 +122,7 @@ Create a `sql-mcp.config.json` file:
   "security": {
     "allowWrite": false,
     "allowedWriteOperations": ["INSERT", "UPDATE"],
+    "disableDangerousOperations": true,
     "redactSecrets": true
   },
   "logging": {
@@ -74,122 +132,381 @@ Create a `sql-mcp.config.json` file:
 }
 ```
 
-### Configuration Options
+### Configuration Reference
 
 #### Database Configuration
 
-- **`id`** (required): Unique identifier for the database
-- **`type`** (required): Database type (`postgres`, `mysql`, `sqlite`, `mssql`, `oracle`)
-- **`url`**: Connection URL (required for all except SQLite)
-- **`path`**: File path (SQLite only)
-- **`readOnly`**: Enable read-only mode (default: `false`)
-- **`pool`**: Connection pool settings
-  - `min`: Minimum connections
-  - `max`: Maximum connections
-  - `idleTimeoutMillis`: Idle timeout
-  - `connectionTimeoutMillis`: Connection timeout
-- **`introspection`**: Schema introspection options
-  - `includeViews`: Include views (default: `true`)
-  - `includeRoutines`: Include stored procedures/functions
-  - `maxTables`: Limit number of tables to introspect
-  - `includeSchemas`: Array of schemas to include
-  - `excludeSchemas`: Array of schemas to exclude
-- **`eagerConnect`**: Connect on startup (default: `false`)
+Each database in the `databases` array represents a connection to a SQL database.
+
+##### Core Properties
+
+| Property | Type | Required | Default | Description |
+|----------|------|----------|---------|-------------|
+| `id` | string | ✅ Yes | - | Unique identifier for this database connection. Used in all MCP tool calls. Must be unique across all databases. |
+| `type` | enum | ✅ Yes | - | Database system type. Valid values: `postgres`, `mysql`, `sqlite`, `mssql`, `oracle` |
+| `url` | string | Conditional* | - | Database connection string. Required for all databases except SQLite. Supports environment variable interpolation: `${DB_URL}` |
+| `path` | string | Conditional** | - | Filesystem path to SQLite database file. Required only for `type: sqlite`. Can be relative or absolute. |
+| `readOnly` | boolean | No | `true` | When `true`, blocks all write operations (INSERT, UPDATE, DELETE, etc.). Recommended for production safety. |
+| `eagerConnect` | boolean | No | `false` | When `true`, connects to database immediately at startup (fail-fast). When `false`, connects on first query (lazy loading). |
+
+<sub>* Required for postgres, mysql, mssql, oracle</sub>  
+<sub>** Required for sqlite only</sub>
+
+**Connection String Formats:**
+```
+PostgreSQL:  postgresql://username:password@host:5432/database
+MySQL:       mysql://username:password@host:3306/database  
+SQL Server:  Server=host,1433;Database=dbname;User Id=user;Password=pass
+SQLite:      (use path property instead)
+Oracle:      username/password@host:1521/servicename
+```
+
+##### Connection Pool Configuration
+
+The `pool` object controls connection pooling behavior. Improves performance by reusing database connections.
+
+| Property | Type | Required | Default | Description |
+|----------|------|----------|---------|-------------|
+| `min` | number | No | `2` | Minimum number of connections to maintain in the pool. Kept alive even when idle. |
+| `max` | number | No | `10` | Maximum number of concurrent connections. Do not exceed your database's connection limit. |
+| `idleTimeoutMillis` | number | No | `30000` | Time (ms) to keep idle connections alive before closing. Example: `60000` = 1 minute. |
+| `connectionTimeoutMillis` | number | No | `10000` | Time (ms) to wait when establishing a connection before timing out. Fail-fast if database is unreachable. |
+
+**Recommendations:**
+- **Development:** `min: 1`, `max: 5`
+- **Production (Low Traffic):** `min: 2`, `max: 10`
+- **Production (High Traffic):** `min: 5`, `max: 20`
+
+##### Introspection Configuration
+
+The `introspection` object controls schema discovery behavior. Determines what database objects are analyzed.
+
+| Property | Type | Required | Default | Description |
+|----------|------|----------|---------|-------------|
+| `includeViews` | boolean | No | `true` | Include database views in schema discovery. Set to `false` if views cause performance issues. |
+| `includeRoutines` | boolean | No | `false` | Include stored procedures and functions. (Not fully implemented - planned feature) |
+| `maxTables` | number | No | unlimited | Limit introspection to first N tables. Useful for databases with 1000+ tables. May result in incomplete relationship discovery. |
+| `includeSchemas` | string[] | No | all | Whitelist of schemas to introspect. Only applicable to PostgreSQL and SQL Server. Example: `["public", "app"]` |
+| `excludeSchemas` | string[] | No | none | Blacklist of schemas to skip. Common values: `["pg_catalog", "information_schema", "sys"]` |
+
+**Schema vs Database:**
+- **PostgreSQL/SQL Server:** Support multiple schemas per database. Use `includeSchemas`/`excludeSchemas`.
+- **MySQL/MariaDB:** Schema = database. Use database name in connection string.
+- **SQLite:** Single-file database, no schema concept.
 
 #### Cache Configuration
 
-- **`directory`**: Cache directory path (default: `.sql-mcp-cache`)
-- **`ttlMinutes`**: Cache TTL in minutes (default: `10`)
+Controls schema metadata caching to improve startup performance and reduce database load.
+
+| Property | Type | Required | Default | Description |
+|----------|------|----------|---------|-------------|
+| `directory` | string | No | `.sql-mcp-cache` | Directory path where cached schema files are stored. One JSON file per database. |
+| `ttlMinutes` | number | No | `10` | Time-To-Live in minutes. How long cached schema is considered valid before automatic refresh. |
+
+**Cache Behavior:**
+- **On Startup:** Loads schema from cache if available and not expired
+- **After TTL Expiry:** Next query triggers automatic re-introspection
+- **Manual Refresh:** Use `clear_cache` tool or `introspect_schema` with `forceRefresh: true`
+- **Cache Files:** Stored as `{database-id}.json` (e.g., `postgres-main.json`)
+
+**Recommended TTL Values:**
+- **Development:** `5` minutes (schema changes frequently)
+- **Staging:** `30-60` minutes
+- **Production (Static):** `1440` minutes (24 hours)
+- **Production (Active):** `60-240` minutes (1-4 hours)
 
 #### Security Configuration
 
-- **`allowWrite`**: Allow write operations globally (default: `false`)
-- **`allowedWriteOperations`**: Whitelist of allowed write operations (e.g., `["INSERT", "UPDATE"]`)
-- **`redactSecrets`**: Redact passwords in logs (default: `true`)
+Comprehensive security controls to protect your databases from unauthorized or dangerous operations.
 
-#### Logging Configuration
+| Property | Type | Required | Default | Description |
+|----------|------|----------|---------|-------------|
+| `allowWrite` | boolean | No | `false` | Master switch for write operations. When `false`, all writes are blocked across all databases. |
+| `allowedWriteOperations` | string[] | No | all | Whitelist of allowed SQL operations when `allowWrite: true`. Valid values: `INSERT`, `UPDATE`, `DELETE`, `CREATE`, `ALTER`, `DROP`, `TRUNCATE`, `REPLACE`, `MERGE` |
+| `disableDangerousOperations` | boolean | No | `true` | **Extra safety layer.** When `true`, blocks `DELETE`, `TRUNCATE`, and `DROP` operations even if writes are allowed. Prevents accidental data loss. |
+| `redactSecrets` | boolean | No | `true` | Automatically redact passwords and credentials in logs and error messages. |
 
-- **`level`**: Log level (`trace`, `debug`, `info`, `warn`, `error`)
-- **`pretty`**: Pretty-print logs (default: `false`)
+**Security Layers (Evaluated in Order):**
 
-### Environment Variables
+1. **Database-level `readOnly`** → Blocks all writes for specific database
+2. **Global `allowWrite`** → Master switch for all databases
+3. **`disableDangerousOperations`** → Blocks DELETE/TRUNCATE/DROP specifically
+4. **`allowedWriteOperations`** → Whitelist of permitted operations
 
-Use environment variable interpolation in config:
+**Example Configurations:**
 
 ```json
+// Read-only access (default - safest)
 {
-  "url": "${DB_URL_POSTGRES}"
+  "allowWrite": false
+}
+
+// Allow INSERT and UPDATE only (no deletes)
+{
+  "allowWrite": true,
+  "allowedWriteOperations": ["INSERT", "UPDATE"],
+  "disableDangerousOperations": true
+}
+
+// Full write access (development only - dangerous!)
+{
+  "allowWrite": true,
+  "disableDangerousOperations": false
 }
 ```
 
-Create a `.env` file:
+#### Logging Configuration
 
-```env
-DB_URL_POSTGRES=postgresql://user:password@localhost:5432/dbname
-DB_URL_MYSQL=mysql://user:password@localhost:3306/dbname
+Controls log output verbosity and formatting.
+
+| Property | Type | Required | Default | Description |
+|----------|------|----------|---------|-------------|
+| `level` | enum | No | `info` | Log level. Valid values: `trace`, `debug`, `info`, `warn`, `error`. Lower levels include higher levels. |
+| `pretty` | boolean | No | `false` | When `true`, formats logs as human-readable text. When `false`, outputs structured JSON (better for production log aggregation). |
+
+**Log Levels:**
+- **`trace`:** Everything (extremely verbose - use for debugging only)
+- **`debug`:** Detailed diagnostic information
+- **`info`:** General informational messages (recommended for production)
+- **`warn`:** Warning messages that don't prevent operation
+- **`error`:** Error messages only
+
+**Recommendations:**
+- **Development:** `level: "debug"`, `pretty: true`
+- **Production:** `level: "info"`, `pretty: false`
+- **Troubleshooting:** `level: "trace"`, `pretty: true`
+
+---
+
+### Complete Configuration Example
+
+```json
+{
+  "databases": [
+    {
+      "id": "postgres-production",
+      "type": "postgres",
+      "url": "${DATABASE_URL}",
+      "readOnly": true,
+      "pool": {
+        "min": 5,
+        "max": 20,
+        "idleTimeoutMillis": 60000,
+        "connectionTimeoutMillis": 5000
+      },
+      "introspection": {
+        "includeViews": true,
+        "includeRoutines": false,
+        "excludeSchemas": ["pg_catalog", "information_schema"]
+      },
+      "eagerConnect": true
+    },
+    {
+      "id": "mysql-analytics",
+      "type": "mysql",
+      "url": "${MYSQL_URL}",
+      "readOnly": true,
+      "pool": {
+        "min": 2,
+        "max": 10
+      },
+      "introspection": {
+        "includeViews": true,
+        "maxTables": 100
+      }
+    },
+    {
+      "id": "sqlite-local",
+      "type": "sqlite",
+      "path": "./data/app.db",
+      "readOnly": false
+    }
+  ],
+  "cache": {
+    "directory": ".sql-mcp-cache",
+    "ttlMinutes": 60
+  },
+  "security": {
+    "allowWrite": false,
+    "allowedWriteOperations": ["INSERT", "UPDATE"],
+    "disableDangerousOperations": true,
+    "redactSecrets": true
+  },
+  "logging": {
+    "level": "info",
+    "pretty": false
+  }
+}
 ```
 
-### Connection Strings
+---
+
+### Environment Variables
+
+**Secure Configuration with Environment Variables:**
+
+The server supports environment variable interpolation using `${VARIABLE_NAME}` syntax. This is the recommended approach for managing sensitive credentials.
+
+**Example Configuration:**
+```json
+{
+  "databases": [
+    {
+      "id": "production-db",
+      "type": "postgres",
+      "url": "${DATABASE_URL}"
+    }
+  ]
+}
+```
+
+**Environment File (`.env`):**
+```env
+DATABASE_URL=postgresql://user:password@localhost:5432/dbname
+DB_URL_MYSQL=mysql://user:password@localhost:3306/dbname
+DB_URL_MSSQL=Server=host,1433;Database=db;User Id=sa;Password=pass
+```
+
+**Best Practices:**
+- ✅ Store `.env` file outside version control (add to `.gitignore`)
+- ✅ Use different `.env` files for each environment (dev, staging, prod)
+- ✅ Never commit credentials to git repositories
+- ✅ Use secret management services (AWS Secrets Manager, HashiCorp Vault) in production
+
+---
+
+### Connection String Reference
+
+| Database | Format | Example |
+|----------|--------|---------|
+| **PostgreSQL** | `postgresql://user:pass@host:port/db` | `postgresql://admin:secret@localhost:5432/myapp` |
+| **MySQL** | `mysql://user:pass@host:port/db` | `mysql://root:password@localhost:3306/myapp` |
+| **SQL Server** | `Server=host,port;Database=db;User Id=user;Password=pass` | `Server=localhost,1433;Database=myapp;User Id=sa;Password=secret` |
+| **SQLite** | Use `path` property | `"path": "./data/app.db"` or `"path": "/var/db/app.sqlite"` |
+| **Oracle** | `user/pass@host:port/service` | `admin/secret@localhost:1521/XEPDB1` |
+
+**Additional Parameters:**
 
 **PostgreSQL:**
 ```
-postgresql://user:password@host:5432/database
+postgresql://user:pass@host:5432/db?sslmode=require&connect_timeout=10
 ```
 
 **MySQL:**
 ```
-mysql://user:password@host:3306/database
+mysql://user:pass@host:3306/db?charset=utf8mb4&timezone=Z
 ```
 
 **SQL Server:**
 ```
-Server=host,1433;Database=dbname;User Id=sa;Password=pass;Encrypt=true
+Server=host;Database=db;User Id=user;Password=pass;Encrypt=true;TrustServerCertificate=false
 ```
 
-**SQLite:**
-```json
-{
-  "type": "sqlite",
-  "path": "./data/app.db"
-}
-```
+---
 
-**Oracle:**
-```
-user/password@host:1521/XEPDB1
-```
+## MCP Client Integration
 
-## MCP Client Configuration
+### Configuration File Locations
 
-Add to your MCP client's `mcp.json`:
+| MCP Client | Configuration File Path |
+|------------|------------------------|
+| **Claude Desktop** (macOS) | `~/Library/Application Support/Claude/claude_desktop_config.json` |
+| **Claude Desktop** (Windows) | `%APPDATA%\Claude\claude_desktop_config.json` |
+| **Cline** (VS Code) | VS Code settings → MCP Servers |
+| **Other Clients** | Refer to client-specific documentation |
 
+### Setup Methods
+
+#### Method 1: Global npm Installation
+
+**Configuration:**
 ```json
 {
   "mcpServers": {
-    "sql-mcp": {
-      "command": "node",
-      "args": [
-        "/path/to/sql-mcp/dist/index.js",
-        "--config",
-        "/path/to/sql-mcp.config.json"
-      ],
+    "database": {
+      "command": "mcp-database-server",
+      "args": ["--config", "/absolute/path/to/.mcp-database-server.config"],
       "env": {
-        "DB_URL_POSTGRES": "postgresql://user:password@localhost:5432/dbname"
+        "DATABASE_URL": "postgresql://user:pass@localhost:5432/db"
       }
     }
   }
 }
 ```
 
-## Available Tools
+#### Method 2: Source Installation
 
-### `list_databases`
+**Configuration:**
+```json
+{
+  "mcpServers": {
+    "database": {
+      "command": "node",
+      "args": [
+        "/absolute/path/to/mcp-database-server/dist/index.js",
+        "--config",
+        "/absolute/path/to/.mcp-database-server.config"
+      ],
+      "env": {
+        "DATABASE_URL": "postgresql://user:pass@localhost:5432/db"
+      }
+    }
+  }
+}
+```
 
-List all configured databases with connection status and cache information.
+### Configuration Properties
 
-**Input:** None
+| Property | Description | Example |
+|----------|-------------|---------|
+| `command` | Executable to run. Use `mcp-database-server` for npm install, `node` for source install. | `"mcp-database-server"` |
+| `args` | Array of command-line arguments. First arg is usually `--config` followed by config file path. | `["--config", "/path/to/config"]` |
+| `env` | Environment variables passed to the server. Used for secure credential management. | `{"DATABASE_URL": "..."}` |
 
-**Output:**
+**Finding Absolute Paths:**
+```bash
+# macOS/Linux
+cd /path/to/mcp-database-server
+pwd  # prints: /Users/username/projects/mcp-database-server
+
+# Windows (PowerShell)
+cd C:\path\to\mcp-database-server
+$PWD.Path  # prints: C:\Users\username\projects\mcp-database-server
+```
+
+---
+
+## Available MCP Tools
+
+This server provides 9 tools for comprehensive database interaction.
+
+### Tool Reference
+
+| Tool | Purpose | Write Access | Cached Data |
+|------|---------|--------------|-------------|
+| `list_databases` | List all configured databases with status | No | Uses cache |
+| `introspect_schema` | Discover and cache database schema | No | Writes cache |
+| `get_schema` | Retrieve cached schema metadata | No | Reads cache |
+| `run_query` | Execute SQL queries with safety controls | Conditional* | Updates stats |
+| `explain_query` | Analyze query execution plans | No | No cache |
+| `suggest_joins` | Get intelligent join path recommendations | No | Uses cache |
+| `clear_cache` | Clear schema cache and statistics | No | Clears cache |
+| `cache_status` | View cache health and statistics | No | Reads cache |
+| `health_check` | Test database connectivity | No | No cache |
+
+<sub>* Requires `allowWrite: true` and respects security settings</sub>
+
+---
+
+### 1. list_databases
+
+Lists all configured databases with their connection status and cache information.
+
+**Input Parameters:**
+
+None required.
+
+**Response:**
 ```json
 [
   {
@@ -203,11 +520,36 @@ List all configured databases with connection status and cache information.
 ]
 ```
 
-### `introspect_schema`
+**Response Fields:**
 
-Introspect and cache database schema metadata.
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string | Database identifier from configuration |
+| `type` | string | Database type (postgres, mysql, sqlite, mssql, oracle) |
+| `connected` | boolean | Whether database connection is active |
+| `cached` | boolean | Whether schema is currently cached |
+| `cacheAge` | number | Age of cached schema in milliseconds (if cached) |
+| `version` | string | Cache version hash (if cached) |
 
-**Input:**
+---
+
+### 2. introspect_schema
+
+Discovers and caches complete database schema including tables, columns, indexes, foreign keys, and relationships.
+
+**Input Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `dbId` | string | Yes | Database identifier to introspect |
+| `forceRefresh` | boolean | No | Force re-introspection even if cache is valid (default: `false`) |
+| `schemaFilter` | object | No | Filter which objects to introspect |
+| `schemaFilter.includeSchemas` | string[] | No | Only introspect these schemas (PostgreSQL/SQL Server) |
+| `schemaFilter.excludeSchemas` | string[] | No | Skip these schemas during introspection |
+| `schemaFilter.includeViews` | boolean | No | Include database views (default: `true`) |
+| `schemaFilter.maxTables` | number | No | Limit to first N tables |
+
+**Example Request:**
 ```json
 {
   "dbId": "postgres-main",
@@ -221,11 +563,11 @@ Introspect and cache database schema metadata.
 }
 ```
 
-**Output:**
+**Response:**
 ```json
 {
   "dbId": "postgres-main",
-  "version": "abc123",
+  "version": "a1b2c3d4",
   "introspectedAt": "2026-01-26T10:00:00.000Z",
   "schemas": [
     {
@@ -239,11 +581,21 @@ Introspect and cache database schema metadata.
 }
 ```
 
-### `get_schema`
+---
 
-Retrieve cached schema metadata.
+### 3. get_schema
 
-**Input:**
+Retrieves detailed schema metadata from cache without querying the database.
+
+**Input Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `dbId` | string | Yes | Database identifier |
+| `schema` | string | No | Filter to specific schema name |
+| `table` | string | No | Filter to specific table name |
+
+**Example Request:**
 ```json
 {
   "dbId": "postgres-main",
@@ -252,29 +604,43 @@ Retrieve cached schema metadata.
 }
 ```
 
-**Output:** Complete schema metadata including tables, columns, indexes, and foreign keys.
+**Response:** Complete schema metadata including tables, columns, data types, indexes, foreign keys, and inferred relationships.
 
-### `run_query`
+---
 
-Execute SQL query with automatic schema caching and relationship annotation.
+### 4. run_query
 
-**Input:**
+Executes SQL queries with automatic schema caching, relationship annotation, and comprehensive security controls.
+
+**Input Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `dbId` | string | Yes | Database identifier to query |
+| `sql` | string | Yes | SQL query to execute |
+| `params` | array | No | Parameterized query values (prevents SQL injection) |
+| `limit` | number | No | Maximum number of rows to return |
+| `timeoutMs` | number | No | Query timeout in milliseconds |
+
+**Example Request:**
 ```json
 {
   "dbId": "postgres-main",
-  "sql": "SELECT * FROM users WHERE active = $1",
-  "params": [true],
-  "limit": 100,
+  "sql": "SELECT * FROM users WHERE active = $1 LIMIT $2",
+  "params": [true, 10],
   "timeoutMs": 5000
 }
 ```
 
-**Output:**
+**Response:**
 ```json
 {
-  "rows": [...],
+  "rows": [
+    {"id": 1, "name": "Alice", "email": "alice@example.com", "active": true},
+    {"id": 2, "name": "Bob", "email": "bob@example.com", "active": true}
+  ],
   "columns": ["id", "name", "email", "active"],
-  "rowCount": 42,
+  "rowCount": 2,
   "executionTimeMs": 15,
   "metadata": {
     "relationships": [...],
@@ -287,30 +653,51 @@ Execute SQL query with automatic schema caching and relationship annotation.
 }
 ```
 
-**Security:**
-- Write operations blocked by default unless `allowWrite: true`
-- Specific operations can be whitelisted via `allowedWriteOperations`
+**Security Controls:**
+- ✅ Write operations blocked by default (`allowWrite: false`)
+- ✅ Dangerous operations (DELETE, TRUNCATE, DROP) disabled by default
+- ✅ Specific operations can be whitelisted via `allowedWriteOperations`
+- ✅ Per-database `readOnly` mode
 
-### `explain_query`
+---
 
-Get database query execution plan.
+### 5. explain_query
 
-**Input:**
+Retrieves database query execution plan without executing the query.
+
+**Input Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `dbId` | string | Yes | Database identifier |
+| `sql` | string | Yes | SQL query to analyze |
+| `params` | array | No | Query parameters (for parameterized queries) |
+
+**Example Request:**
 ```json
 {
   "dbId": "postgres-main",
-  "sql": "SELECT * FROM users JOIN orders ON users.id = orders.user_id",
-  "params": []
+  "sql": "SELECT * FROM users JOIN orders ON users.id = orders.user_id WHERE users.active = $1",
+  "params": [true]
 }
 ```
 
-**Output:** Database-native execution plan (JSON format where supported).
+**Response:** Database-native execution plan (format varies by database type).
 
-### `suggest_joins`
+---
 
-Get intelligent join suggestions based on relationship graph.
+### 6. suggest_joins
 
-**Input:**
+Analyzes relationship graph to recommend optimal join paths between multiple tables.
+
+**Input Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `dbId` | string | Yes | Database identifier |
+| `tables` | string[] | Yes | Array of table names to join (2-10 tables) |
+
+**Example Request:**
 ```json
 {
   "dbId": "postgres-main",
@@ -318,7 +705,7 @@ Get intelligent join suggestions based on relationship graph.
 }
 ```
 
-**Output:**
+**Response:**
 ```json
 [
   {
@@ -327,32 +714,105 @@ Get intelligent join suggestions based on relationship graph.
       {
         "fromTable": "users",
         "toTable": "orders",
-        "relationship": {...},
+        "relationship": {
+          "type": "one-to-many",
+          "confidence": 1.0
+        },
         "joinCondition": "users.id = orders.user_id"
       },
       {
         "fromTable": "orders",
         "toTable": "products",
-        "relationship": {...},
+        "relationship": {
+          "type": "many-to-one",
+          "confidence": 1.0
+        },
         "joinCondition": "orders.product_id = products.id"
       }
-    ]
+    ],
+    "sql": "FROM users JOIN orders ON users.id = orders.user_id JOIN products ON orders.product_id = products.id"
   }
 ]
 ```
 
-### `clear_cache`
+---
 
-Clear schema cache and query history.
+### 7. clear_cache
 
-**Input:**
+Clears schema cache and query statistics for one or all databases.
+
+**Input Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `dbId` | string | No | Database to clear (omit to clear all) |
+
+**Example Request:**
 ```json
 {
   "dbId": "postgres-main"
 }
 ```
 
-Omit `dbId` to clear all caches.
+**Response:** Confirmation message.
+
+---
+
+### 8. cache_status
+
+Retrieves detailed cache statistics and health information.
+
+**Input Parameters:**
+
+None required.
+
+**Response:**
+```json
+{
+  "directory": ".sql-mcp-cache",
+  "ttlMinutes": 10,
+  "databases": [
+    {
+      "dbId": "postgres-main",
+      "cached": true,
+      "version": "abc123",
+      "age": 120000,
+      "expired": false,
+      "tableCount": 15,
+      "sizeBytes": 45678
+    }
+  ]
+}
+```
+
+---
+
+### 9. health_check
+
+Tests database connectivity and returns status information.
+
+**Input Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `dbId` | string | No | Database to check (omit to check all) |
+
+**Response:**
+```json
+{
+  "databases": [
+    {
+      "dbId": "postgres-main",
+      "healthy": true,
+      "connected": true,
+      "version": "PostgreSQL 15.3",
+      "responseTimeMs": 12
+    }
+  ]
+}
+```
+
+---
 
 ### `cache_status`
 

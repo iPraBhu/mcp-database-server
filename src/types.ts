@@ -30,7 +30,7 @@ export const DatabaseConfigSchema = z.object({
   type: z.enum(['postgres', 'mysql', 'mssql', 'sqlite', 'oracle']),
   url: z.string().optional(),
   path: z.string().optional(),
-  readOnly: z.boolean().optional().default(false),
+  readOnly: z.boolean().optional().default(true),
   pool: ConnectionPoolSchema.optional(),
   introspection: IntrospectionOptionsSchema.optional(),
   eagerConnect: z.boolean().optional().default(false),
@@ -52,10 +52,11 @@ export const ServerConfigSchema = z.object({
     .object({
       allowWrite: z.boolean().optional().default(false),
       allowedWriteOperations: z.array(z.string()).optional(),
+      disableDangerousOperations: z.boolean().optional().default(true),
       redactSecrets: z.boolean().optional().default(true),
     })
     .optional()
-    .default({ allowWrite: false, redactSecrets: true }),
+    .default({ allowWrite: false, disableDangerousOperations: true, redactSecrets: true }),
   logging: z
     .object({
       level: z.enum(['trace', 'debug', 'info', 'warn', 'error']).optional().default('info'),
