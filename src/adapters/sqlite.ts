@@ -18,13 +18,13 @@ export class SQLiteAdapter extends BaseAdapter {
 
   async connect(): Promise<void> {
     try {
-      const dbPath = this.config.path || this.config.url;
+      const dbPath = this._config.path || this._config.url;
       if (!dbPath) {
         throw new Error('SQLite requires path or url configuration');
       }
 
       this.db = new Database(dbPath, {
-        readonly: this.config.readOnly,
+        readonly: this._config.readOnly,
         fileMustExist: false,
       });
 
@@ -32,7 +32,7 @@ export class SQLiteAdapter extends BaseAdapter {
       this.db.pragma('foreign_keys = ON');
 
       this.connected = true;
-      this.logger.info({ dbId: this.config.id, path: dbPath }, 'SQLite connected');
+      this.logger.info({ dbId: this._config.id, path: dbPath }, 'SQLite connected');
     } catch (error) {
       this.handleError(error, 'connect');
     }
@@ -43,7 +43,7 @@ export class SQLiteAdapter extends BaseAdapter {
       this.db.close();
       this.db = undefined;
       this.connected = false;
-      this.logger.info({ dbId: this.config.id }, 'SQLite disconnected');
+      this.logger.info({ dbId: this._config.id }, 'SQLite disconnected');
     }
   }
 
@@ -53,7 +53,7 @@ export class SQLiteAdapter extends BaseAdapter {
     try {
       const schemas = await this.getSchemas(options);
       const dbSchema: DatabaseSchema = {
-        dbId: this.config.id,
+        dbId: this._config.id,
         dbType: 'sqlite',
         schemas,
         introspectedAt: new Date(),

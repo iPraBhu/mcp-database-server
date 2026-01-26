@@ -20,11 +20,11 @@ export class MySQLAdapter extends BaseAdapter {
   async connect(): Promise<void> {
     try {
       this.pool = mysql.createPool({
-        uri: this.config.url,
+        uri: this._config.url,
         waitForConnections: true,
-        connectionLimit: this.config.pool?.max || 10,
+        connectionLimit: this._config.pool?.max || 10,
         queueLimit: 0,
-        connectTimeout: this.config.pool?.connectionTimeoutMillis || 10000,
+        connectTimeout: this._config.pool?.connectionTimeoutMillis || 10000,
       });
 
       // Test connection and get database name
@@ -34,7 +34,7 @@ export class MySQLAdapter extends BaseAdapter {
       connection.release();
 
       this.connected = true;
-      this.logger.info({ dbId: this.config.id }, 'MySQL connected');
+      this.logger.info({ dbId: this._config.id }, 'MySQL connected');
     } catch (error) {
       this.handleError(error, 'connect');
     }
@@ -45,7 +45,7 @@ export class MySQLAdapter extends BaseAdapter {
       await this.pool.end();
       this.pool = undefined;
       this.connected = false;
-      this.logger.info({ dbId: this.config.id }, 'MySQL disconnected');
+      this.logger.info({ dbId: this._config.id }, 'MySQL disconnected');
     }
   }
 
@@ -55,7 +55,7 @@ export class MySQLAdapter extends BaseAdapter {
     try {
       const schemas = await this.getSchemas(options);
       const dbSchema: DatabaseSchema = {
-        dbId: this.config.id,
+        dbId: this._config.id,
         dbType: 'mysql',
         schemas,
         introspectedAt: new Date(),

@@ -73,7 +73,7 @@ export class SchemaCache {
       schema,
       relationships: this.buildRelationships(schema),
       cachedAt: new Date(),
-      ttlMinutes: ttlMinutes || this.defaultTtlMinutes,
+      ttlMinutes: ttlMinutes || this._defaultTtlMinutes,
     };
 
     this.cache.set(dbId, entry);

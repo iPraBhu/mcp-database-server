@@ -21,11 +21,11 @@ export class PostgresAdapter extends BaseAdapter {
   async connect(): Promise<void> {
     try {
       this.pool = new Pool({
-        connectionString: this.config.url,
-        min: this.config.pool?.min || 2,
-        max: this.config.pool?.max || 10,
-        idleTimeoutMillis: this.config.pool?.idleTimeoutMillis || 30000,
-        connectionTimeoutMillis: this.config.pool?.connectionTimeoutMillis || 10000,
+        connectionString: this._config.url,
+        min: this._config.pool?.min || 2,
+        max: this._config.pool?.max || 10,
+        idleTimeoutMillis: this._config.pool?.idleTimeoutMillis || 30000,
+        connectionTimeoutMillis: this._config.pool?.connectionTimeoutMillis || 10000,
       });
 
       // Test connection
@@ -33,7 +33,7 @@ export class PostgresAdapter extends BaseAdapter {
       client.release();
 
       this.connected = true;
-      this.logger.info({ dbId: this.config.id }, 'PostgreSQL connected');
+      this.logger.info({ dbId: this._config.id }, 'PostgreSQL connected');
     } catch (error) {
       this.handleError(error, 'connect');
     }
@@ -44,7 +44,7 @@ export class PostgresAdapter extends BaseAdapter {
       await this.pool.end();
       this.pool = undefined;
       this.connected = false;
-      this.logger.info({ dbId: this.config.id }, 'PostgreSQL disconnected');
+      this.logger.info({ dbId: this._config.id }, 'PostgreSQL disconnected');
     }
   }
 
@@ -54,7 +54,7 @@ export class PostgresAdapter extends BaseAdapter {
     try {
       const schemas = await this.getSchemas(options);
       const dbSchema: DatabaseSchema = {
-        dbId: this.config.id,
+        dbId: this._config.id,
         dbType: 'postgres',
         schemas,
         introspectedAt: new Date(),

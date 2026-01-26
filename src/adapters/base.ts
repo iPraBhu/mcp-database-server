@@ -38,7 +38,7 @@ export abstract class BaseAdapter implements DatabaseAdapter {
     throw new DatabaseError(
       `${operation} failed: ${error.message}`,
       error.code || 'UNKNOWN_ERROR',
-      this.config.id,
+      this._config.id,
       error
     );
   }
