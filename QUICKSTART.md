@@ -1,6 +1,6 @@
 # Quick Start Guide
 
-This guide will help you get up and running with mcp-database-server in minutes.
+This guide will help you get up and running with @adevguide/mcp-database-server in minutes.
 
 ## Prerequisites
 

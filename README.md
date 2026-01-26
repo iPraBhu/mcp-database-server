@@ -59,7 +59,7 @@ A production-ready MCP server that provides seamless, intelligent access to mult
 If this package is published to npm:
 
 ```bash
-npm install -g mcp-database-server
+npm install -g @adevguide/mcp-database-server
 ```
 
 Then you can run it directly:

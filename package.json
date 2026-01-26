@@ -1,5 +1,5 @@
 {
-  "name": "mcp-database-server",
+  "name": "@adevguide/mcp-database-server",
   "version": "1.0.0",
   "description": "Model Context Protocol server for unified SQL database access with schema caching and relationship discovery",
   "type": "module",
@@ -14,7 +14,8 @@
     "format": "prettier --write \"src/**/*.ts\"",
     "test": "vitest",
     "test:coverage": "vitest --coverage",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run typecheck && npm run lint && npm test -- --run && npm run build"
   },
   "keywords": [
     "mcp",
@@ -27,8 +28,22 @@
     "mssql",
     "oracle"
   ],
-  "author": "",
+  "author": "Pratik Bhuite",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/iPraBhu/mcp-database-server.git"
+  },
+  "bugs": {
+    "url": "https://github.com/iPraBhu/mcp-database-server/issues"
+  },
+  "homepage": "https://github.com/iPraBhu/mcp-database-server#readme",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "mcp-database-server.config.example"
+  ],
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.4",
     "better-sqlite3": "^11.8.1",
