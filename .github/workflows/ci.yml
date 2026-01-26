@@ -16,6 +16,13 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Show versions and lint script
+        run: |
+          node --version
+          npm --version
+          npx eslint --version
+          echo "lint: $(node -p \"require('./package.json').scripts.lint\")"
+
       - name: Setup Node.js ${{ matrix.node-version }}
         uses: actions/setup-node@v4
         with:
