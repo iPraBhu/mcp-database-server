@@ -16,13 +16,6 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Show versions and lint script
-        run: |
-          node --version
-          npm --version
-          npx eslint --version
-          echo "lint: $(node -p \"require('./package.json').scripts.lint\")"
-
       - name: Setup Node.js ${{ matrix.node-version }}
         uses: actions/setup-node@v4
         with:
@@ -31,6 +24,13 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Show versions and lint script
+        run: |
+          node --version
+          npm --version
+          npx --no-install eslint --version
+          node -e "console.log('lint:', require('./package.json').scripts.lint)"
 
       - name: Run type check
         run: npm run typecheck
