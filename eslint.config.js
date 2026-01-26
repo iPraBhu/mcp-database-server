@@ -39,7 +39,7 @@ export default [
       ],
       'no-unused-vars': 'off', // Disable base rule
       'no-undef': 'off', // TypeScript handles this
-      '@typescript-eslint/no-explicit-any': 'warn',
+      '@typescript-eslint/no-explicit-any': 'off', // Allow any for database flexibility
       'no-console': 'off',
     },
   },
