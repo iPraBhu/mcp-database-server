@@ -20,7 +20,7 @@ export class DatabaseManager {
   private queryTracker = new QueryTracker();
 
   constructor(
-    private configs: DatabaseConfig[],
+    private _configs: DatabaseConfig[],
     private options: DatabaseManagerOptions
   ) {
     this.cache = new SchemaCache(options.cacheDir, options.cacheTtlMinutes);
@@ -30,7 +30,7 @@ export class DatabaseManager {
     await this.cache.init();
 
     // Create adapters
-    for (const config of this.configs) {
+    for (const config of this._configs) {
       const adapter = createAdapter(config);
       this.adapters.set(config.id, adapter);
 
@@ -44,7 +44,7 @@ export class DatabaseManager {
       }
     }
 
-    this.logger.info({ databases: this.configs.length }, 'Database manager initialized');
+    this.logger.info({ databases: this._configs.length }, 'Database manager initialized');
   }
 
   async shutdown(): Promise<void> {
@@ -59,11 +59,11 @@ export class DatabaseManager {
   }
 
   getConfigs(): DatabaseConfig[] {
-    return this.configs;
+    return this._configs;
   }
 
   getConfig(dbId: string): DatabaseConfig | undefined {
-    return this.configs.find((c) => c.id === dbId);
+    return this._configs.find((c) => c.id === dbId);
   }
 
   private getAdapter(dbId: string): DatabaseAdapter {

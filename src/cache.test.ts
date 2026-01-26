@@ -1,6 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import fs from 'fs/promises';
-import path from 'path';
 import { SchemaCache } from '../src/cache.js';
 import { DatabaseSchema } from '../src/types.js';
 

@@ -184,9 +184,9 @@ export interface DatabaseAdapter {
 export class DatabaseError extends Error {
   constructor(
     message: string,
-    public code: string,
-    public dbId?: string,
-    public originalError?: Error
+    public _code: string,
+    public _dbId?: string,
+    public _originalError?: Error
   ) {
     super(message);
     this.name = 'DatabaseError';
@@ -194,14 +194,14 @@ export class DatabaseError extends Error {
 }
 
 export class ConfigError extends Error {
-  constructor(message: string, public details?: any) {
+  constructor(message: string, public _details?: any) {
     super(message);
     this.name = 'ConfigError';
   }
 }
 
 export class CacheError extends Error {
-  constructor(message: string, public originalError?: Error) {
+  constructor(message: string, public _originalError?: Error) {
     super(message);
     this.name = 'CacheError';
   }
