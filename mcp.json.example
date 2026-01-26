@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "sql-mcp": {
+      "command": "node",
+      "args": [
+        "/path/to/sql-mcp/dist/index.js",
+        "--config",
+        "/path/to/sql-mcp.config.json"
+      ],
+      "env": {
+        "DB_URL_POSTGRES": "postgresql://user:password@localhost:5432/dbname",
+        "DB_URL_MYSQL": "mysql://user:password@localhost:3306/dbname"
+      }
+    }
+  }
+}

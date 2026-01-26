@@ -1,0 +1,58 @@
+{
+  "databases": [
+    {
+      "id": "postgres-main",
+      "type": "postgres",
+      "url": "${DB_URL_POSTGRES}",
+      "readOnly": false,
+      "pool": {
+        "min": 2,
+        "max": 10,
+        "idleTimeoutMillis": 30000,
+        "connectionTimeoutMillis": 10000
+      },
+      "introspection": {
+        "includeViews": true,
+        "includeRoutines": false,
+        "excludeSchemas": ["pg_catalog", "information_schema"]
+      },
+      "eagerConnect": false
+    },
+    {
+      "id": "mysql-analytics",
+      "type": "mysql",
+      "url": "${DB_URL_MYSQL}",
+      "readOnly": true,
+      "pool": {
+        "min": 1,
+        "max": 5
+      },
+      "introspection": {
+        "includeViews": true,
+        "maxTables": 100
+      }
+    },
+    {
+      "id": "sqlite-local",
+      "type": "sqlite",
+      "path": "./data/app.db",
+      "readOnly": false,
+      "introspection": {
+        "includeViews": true
+      }
+    }
+  ],
+  "cache": {
+    "directory": ".sql-mcp-cache",
+    "ttlMinutes": 10
+  },
+  "security": {
+    "allowWrite": false,
+    "allowedWriteOperations": ["INSERT", "UPDATE"],
+    "redactSecrets": true
+  },
+  "logging": {
+    "level": "info",
+    "pretty": false
+  }
+}

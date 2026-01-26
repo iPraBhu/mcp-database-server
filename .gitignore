@@ -1,0 +1,15 @@
+node_modules/
+dist/
+.sql-mcp-cache/
+*.log
+.env
+.DS_Store
+coverage/
+*.db
+*.sqlite
+*.sqlite3
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
