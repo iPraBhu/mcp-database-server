@@ -14,9 +14,14 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+          fetch-depth: 0
 
       - name: Show versions and lint script
         run: |
+          echo "ref: $GITHUB_REF"
+          echo "sha: $GITHUB_SHA"
           git rev-parse --short HEAD
           node --version
           npm --version
