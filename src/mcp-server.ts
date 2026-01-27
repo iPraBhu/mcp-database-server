@@ -217,6 +217,89 @@ export class MCPServer {
             },
           },
         },
+        {
+          name: 'analyze_performance',
+          description: 'Get detailed performance analytics for a database',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              dbId: {
+                type: 'string',
+                description: 'Database ID to analyze',
+              },
+            },
+            required: ['dbId'],
+          },
+        },
+        {
+          name: 'suggest_indexes',
+          description: 'Analyze query patterns and suggest optimal indexes',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              dbId: {
+                type: 'string',
+                description: 'Database ID to analyze',
+              },
+            },
+            required: ['dbId'],
+          },
+        },
+        {
+          name: 'detect_slow_queries',
+          description: 'Identify and alert on slow-running queries',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              dbId: {
+                type: 'string',
+                description: 'Database ID to analyze',
+              },
+            },
+            required: ['dbId'],
+          },
+        },
+        {
+          name: 'rewrite_query',
+          description: 'Suggest optimized versions of SQL queries',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              dbId: {
+                type: 'string',
+                description: 'Database ID',
+              },
+              sql: {
+                type: 'string',
+                description: 'SQL query to optimize',
+              },
+            },
+            required: ['dbId', 'sql'],
+          },
+        },
+        {
+          name: 'profile_query',
+          description: 'Profile query performance with detailed analysis',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              dbId: {
+                type: 'string',
+                description: 'Database ID',
+              },
+              sql: {
+                type: 'string',
+                description: 'SQL query to profile',
+              },
+              params: {
+                type: 'array',
+                description: 'Query parameters',
+                items: {},
+              },
+            },
+            required: ['dbId', 'sql'],
+          },
+        },
       ],
     }));
 
@@ -252,6 +335,21 @@ export class MCPServer {
 
           case 'health_check':
             return await this.handleHealthCheck(args as any);
+
+          case 'analyze_performance':
+            return await this.handleAnalyzePerformance(args as any);
+
+          case 'suggest_indexes':
+            return await this.handleSuggestIndexes(args as any);
+
+          case 'detect_slow_queries':
+            return await this.handleDetectSlowQueries(args as any);
+
+          case 'rewrite_query':
+            return await this.handleRewriteQuery(args as any);
+
+          case 'profile_query':
+            return await this.handleProfileQuery(args as any);
 
           default:
             throw new Error(`Unknown tool: ${name}`);
@@ -539,6 +637,75 @@ export class MCPServer {
         {
           type: 'text',
           text: JSON.stringify(results, null, 2),
+        },
+      ],
+    };
+  }
+
+  private async handleAnalyzePerformance(args: { dbId: string }) {
+    const analytics = this._dbManager.getPerformanceAnalytics(args.dbId);
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify(analytics, null, 2),
+        },
+      ],
+    };
+  }
+
+  private async handleSuggestIndexes(args: { dbId: string }) {
+    const recommendations = await this._dbManager.getIndexRecommendations(args.dbId);
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify(recommendations, null, 2),
+        },
+      ],
+    };
+  }
+
+  private async handleDetectSlowQueries(args: { dbId: string }) {
+    const alerts = this._dbManager.getSlowQueryAlerts(args.dbId);
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify(alerts, null, 2),
+        },
+      ],
+    };
+  }
+
+  private async handleRewriteQuery(args: { dbId: string; sql: string }) {
+    const suggestion = await this._dbManager.suggestQueryRewrite(args.dbId, args.sql);
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify(suggestion, null, 2),
+        },
+      ],
+    };
+  }
+
+  private async handleProfileQuery(args: {
+    dbId: string;
+    sql: string;
+    params?: any[];
+  }) {
+    const profile = await this._dbManager.profileQueryPerformance(args.dbId, args.sql, args.params);
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify(profile, null, 2),
         },
       ],
     };

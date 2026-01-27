@@ -25,6 +25,9 @@ Production-grade Model Context Protocol (MCP) server for unified SQL database ac
 - Query intelligence: tracking, statistics, timeouts
 - Join assistance: suggested join paths based on relationship graphs
 - Safety controls: read-only mode, allow/deny write operations, secret redaction
+- **Query optimization**: index recommendations, performance profiling, slow query detection
+- **Performance monitoring**: detailed execution analytics, bottleneck identification
+- **Query rewriting**: automated optimization suggestions with performance impact estimates
 
 ## Why this exists
 
@@ -489,7 +492,7 @@ $PWD.Path  # prints: C:\Users\username\projects\mcp-database-server
 
 ## Available MCP Tools
 
-This server provides 9 tools for comprehensive database interaction.
+This server provides 14 tools for comprehensive database interaction and optimization.
 
 ### Tool Reference
 
@@ -504,6 +507,11 @@ This server provides 9 tools for comprehensive database interaction.
 | `clear_cache` | Clear schema cache and statistics | No | Clears cache |
 | `cache_status` | View cache health and statistics | No | Reads cache |
 | `health_check` | Test database connectivity | No | No cache |
+| `analyze_performance` | Get detailed performance analytics | No | Uses stats |
+| `suggest_indexes` | Analyze queries and recommend indexes | No | Uses stats |
+| `detect_slow_queries` | Identify and alert on slow queries | No | Uses stats |
+| `rewrite_query` | Suggest optimized query versions | No | Uses cache |
+| `profile_query` | Profile query performance with bottlenecks | No | No cache |
 
 <sub>* Requires `allowWrite: true` and respects security settings</sub>
 
@@ -825,53 +833,165 @@ Tests database connectivity and returns status information.
 
 ---
 
-### `cache_status`
+### 10. analyze_performance
 
-Get cache status and statistics.
+Get comprehensive performance analytics across all queries for a database.
 
-**Input:**
+**Input Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `dbId` | string | Yes | Database to analyze |
+
+**Response:**
 ```json
 {
-  "dbId": "postgres-main"
+  "totalQueries": 1250,
+  "slowQueries": 23,
+  "avgExecutionTime": 45.67,
+  "p95ExecutionTime": 234.5,
+  "errorRate": 1.2,
+  "mostFrequentTables": [
+    { "table": "users", "count": 456 },
+    { "table": "orders", "count": 234 }
+  ],
+  "performanceTrend": "improving"
 }
 ```
 
-**Output:**
+---
+
+### 11. suggest_indexes
+
+Analyze query patterns and recommend optimal database indexes.
+
+**Input Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `dbId` | string | Yes | Database to analyze |
+
+**Response:**
 ```json
 [
   {
-    "dbId": "postgres-main",
-    "exists": true,
-    "age": 45000,
-    "ttlMinutes": 10,
-    "expired": false,
-    "version": "abc123",
-    "tableCount": 15,
-    "relationshipCount": 12
+    "table": "orders",
+    "columns": ["customer_id", "order_date"],
+    "type": "composite",
+    "reason": "Frequently used in WHERE and JOIN conditions",
+    "impact": "high"
+  },
+  {
+    "table": "products",
+    "columns": ["category_id"],
+    "type": "single",
+    "reason": "Column category_id is frequently queried",
+    "impact": "medium"
   }
 ]
 ```
 
-### `health_check`
+---
 
-Check database connectivity and version information.
+### 12. detect_slow_queries
 
-**Input:**
-```json
-{
-  "dbId": "postgres-main"
-}
-```
+Identify queries that exceed performance thresholds and provide alerts.
 
-**Output:**
+**Input Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `dbId` | string | Yes | Database to analyze |
+
+**Response:**
 ```json
 [
   {
     "dbId": "postgres-main",
-    "healthy": true,
-    "version": "PostgreSQL 15.3"
+    "queryId": "a1b2c3",
+    "sql": "SELECT * FROM large_table WHERE slow_column = ?",
+    "executionTimeMs": 2500,
+    "thresholdMs": 1000,
+    "timestamp": "2024-01-27T10:30:00Z",
+    "frequency": 5,
+    "recommendations": [
+      {
+        "type": "add_index",
+        "description": "Add index on slow_column for better performance",
+        "impact": "high",
+        "effort": "medium"
+      }
+    ]
   }
 ]
+```
+
+---
+
+### 13. rewrite_query
+
+Suggest optimized versions of SQL queries with performance improvements.
+
+**Input Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `dbId` | string | Yes | Database ID |
+| `sql` | string | Yes | SQL query to optimize |
+
+**Response:**
+```json
+{
+  "originalQuery": "SELECT * FROM users WHERE active = 1",
+  "optimizedQuery": "SELECT id, name, email FROM users WHERE active = 1 LIMIT 1000",
+  "improvements": [
+    "Removed unnecessary SELECT *",
+    "Added LIMIT clause to prevent large result sets"
+  ],
+  "performanceGain": 35,
+  "confidence": "high"
+}
+```
+
+---
+
+### 14. profile_query
+
+Profile a specific query's performance with detailed bottleneck analysis.
+
+**Input Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `dbId` | string | Yes | Database ID |
+| `sql` | string | Yes | SQL query to profile |
+| `params` | array | No | Query parameters |
+
+**Response:**
+```json
+{
+  "queryId": "def456",
+  "sql": "SELECT u.name, COUNT(o.id) FROM users u JOIN orders o ON u.id = o.user_id GROUP BY u.id",
+  "executionTimeMs": 1250,
+  "rowCount": 5000,
+  "bottlenecks": [
+    {
+      "type": "join",
+      "severity": "high",
+      "description": "Nested loop join on large tables",
+      "estimatedCost": 150
+    }
+  ],
+  "recommendations": [
+    {
+      "type": "add_index",
+      "description": "Add index on orders.user_id",
+      "impact": "high",
+      "effort": "low"
+    }
+  ],
+  "overallScore": 65
+}
 ```
 
 ## Resources

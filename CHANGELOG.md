@@ -5,6 +5,38 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2026-01-27
+
+### Added
+
+#### Query Optimization & Performance Features
+- **Index Recommendations**: Analyze query patterns and suggest optimal indexes based on WHERE clauses and JOIN conditions
+- **Query Performance Profiling**: Detailed execution statistics with bottleneck identification using EXPLAIN plans
+- **Slow Query Detection**: Automatic identification and alerting for queries exceeding performance thresholds
+- **Query Rewriting**: Suggest optimized versions of SQL queries with performance impact estimates
+- **Performance Analytics**: Comprehensive analytics across all queries including trends and patterns
+
+#### New MCP Tools
+- `analyze_performance` - Get detailed performance analytics for databases
+- `suggest_indexes` - Analyze query patterns and recommend optimal indexes
+- `detect_slow_queries` - Identify and alert on slow-running queries
+- `rewrite_query` - Suggest optimized versions of SQL queries
+- `profile_query` - Profile query performance with detailed bottleneck analysis
+
+#### Enhanced Query Tracking
+- Query complexity analysis (simple/medium/complex/very_complex)
+- Performance scoring (0-100 scale)
+- EXPLAIN plan integration for performance analysis
+- Enhanced statistics with performance metrics
+
+### Technical Details
+
+#### New Components
+- `QueryOptimizer` class for performance analysis and optimization
+- Extended `QueryHistoryEntry` with performance metadata
+- Performance bottleneck detection algorithms
+- Index recommendation engine based on query patterns
+
 ## [1.0.0] - 2026-01-26
 
 ### Added
