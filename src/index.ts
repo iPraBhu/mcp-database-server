@@ -2,7 +2,7 @@
 
 import dotenv from 'dotenv';
 import { parseArgs } from 'util';
-import { readFileSync } from 'fs';
+import { readFileSync, existsSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { loadConfig, findConfigFile } from './config.js';
@@ -29,7 +29,6 @@ async function main() {
         config: {
           type: 'string',
           short: 'c',
-          default: './.mcp-database-server.config',
         },
         help: {
           type: 'boolean',
@@ -55,7 +54,7 @@ Usage:
   mcp-database-server [options]
 
 Options:
-  -c, --config <path>  Path to configuration file (default: ./.mcp-database-server.config)
+  -c, --config <path>  Path to configuration file (if not specified, searches for .mcp-database-server.config upwards from current directory)
   -h, --help          Show this help message
   -v, --version       Show version number
 
@@ -75,15 +74,21 @@ Examples:
     }
 
     // Load configuration
-    let configPath = values.config as string;
+    let configPath: string;
     
-    // If config path is the default, try to find it by traversing up
-    if (configPath === './.mcp-database-server.config') {
+    if (values.config) {
+      configPath = values.config;
+      if (!existsSync(configPath)) {
+        console.error(`Error: Specified config file ${configPath} not found`);
+        process.exit(1);
+      }
+    } else {
+      // No config specified, search upwards for .mcp-database-server.config
       const foundPath = findConfigFile('.mcp-database-server.config');
       if (foundPath) {
         configPath = foundPath;
       } else {
-        console.error('Error: Config file .mcp-database-server.config not found');
+        console.error('Error: No config file specified, and .mcp-database-server.config not found');
         console.error('Searched in current directory and all parent directories');
         console.error('\nTo create a config file:');
         console.error('  cp mcp-database-server.config.example .mcp-database-server.config');

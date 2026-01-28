@@ -96,11 +96,13 @@ Add to your Claude Desktop config file:
 }
 ```
 
+> **Note:** The `--config` argument is optional. If omitted, the server will automatically search for `.mcp-database-server.config` starting from the current directory and moving up through parent directories.
+
 ### Other MCP Clients
 
 Configure according to your MCP client's documentation, using:
 - **Command:** `node`
-- **Args:** `["/path/to/dist/index.js", "--config", "/path/to/config.json"]`
+- **Args:** `["/path/to/dist/index.js"]` (or include `--config /path/to/config.json` if using a custom config file name/location)
 
 ## First Steps
 
