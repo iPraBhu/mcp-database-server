@@ -1,7 +1,50 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { findConfigFile } from './config.js';
+import { findConfigFile, findProjectRoot } from './config.js';
 import { mkdirSync, writeFileSync, rmSync, existsSync } from 'fs';
 import { join } from 'path';
+
+describe('findProjectRoot', () => {
+  const testDir = join(process.cwd(), 'test-project-root');
+  const subDir1 = join(testDir, 'level1');
+  const subDir2 = join(subDir1, 'level2');
+
+  beforeEach(() => {
+    // Clean up if exists
+    if (existsSync(testDir)) {
+      rmSync(testDir, { recursive: true, force: true });
+    }
+    
+    // Create directory structure
+    mkdirSync(subDir2, { recursive: true });
+  });
+
+  afterEach(() => {
+    // Clean up
+    if (existsSync(testDir)) {
+      rmSync(testDir, { recursive: true, force: true });
+    }
+  });
+
+  it('should find project root with package.json', () => {
+    const packageJson = join(testDir, 'package.json');
+    writeFileSync(packageJson, '{"name": "test"}');
+
+    const found = findProjectRoot(subDir2);
+    expect(found).toBe(testDir);
+  });
+
+  it('should find project root with .git', () => {
+    mkdirSync(join(testDir, '.git'));
+    
+    const found = findProjectRoot(subDir2);
+    expect(found).toBe(testDir);
+  });
+
+  it('should return null when no project markers found', () => {
+    const found = findProjectRoot(subDir2);
+    expect(found).toBeNull();
+  });
+});
 
 describe('findConfigFile', () => {
   const testDir = join(process.cwd(), 'test-config-discovery');

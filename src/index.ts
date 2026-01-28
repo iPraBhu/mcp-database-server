@@ -54,7 +54,7 @@ Usage:
   mcp-database-server [options]
 
 Options:
-  -c, --config <path>  Path to configuration file (if not specified, searches for .mcp-database-server.config upwards from current directory)
+  -c, --config <path>  Path to configuration file (if not specified, searches for .mcp-database-server.config from project root upwards)
   -h, --help          Show this help message
   -v, --version       Show version number
 

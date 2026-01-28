@@ -103,7 +103,7 @@ node dist/index.js --config ./.mcp-database-server.config
 
 Create a `.mcp-database-server.config` file in your project root:
 
-> **Note:** The config file is automatically discovered! If you don't specify `--config`, the tool searches for `.mcp-database-server.config` starting in the current directory and traversing up parent directories until found. This means you can run the tool from any subdirectory of your project.
+> **Note:** The config file is automatically discovered! If you don't specify `--config`, the tool first tries to locate your project root (by looking for `package.json`, `.git`, etc.) and searches for `.mcp-database-server.config` starting from there and moving up. If no project root is found, it searches from the current directory. This means you can run the tool from any subdirectory of your project and it will find the config file.
 
 ```json
 {

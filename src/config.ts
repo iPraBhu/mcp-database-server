@@ -5,12 +5,62 @@ import { ServerConfig, ServerConfigSchema, ConfigError } from './types.js';
 import { interpolateEnv } from './utils.js';
 
 /**
+ * Find project root by looking for common project markers
+ * @param startDir - Directory to start searching from (defaults to cwd)
+ * @returns Absolute path to project root or null if not found
+ */
+export function findProjectRoot(startDir: string = process.cwd()): string | null {
+  const projectMarkers = ['package.json', '.git', 'tsconfig.json', 'pyproject.toml', 'Cargo.toml', 'go.mod'];
+  let currentDir = resolve(startDir);
+
+  while (true) {
+    for (const marker of projectMarkers) {
+      if (existsSync(join(currentDir, marker))) {
+        return currentDir;
+      }
+    }
+
+    const parentDir = dirname(currentDir);
+    
+    // Reached filesystem root (parent equals current)
+    if (parentDir === currentDir) {
+      break;
+    }
+
+    // Move up one directory
+    currentDir = parentDir;
+  }
+
+  return null;
+}
+
+/**
  * Find config file by traversing up the directory tree
  * @param fileName - Name of the config file to find
  * @param startDir - Directory to start searching from (defaults to cwd)
  * @returns Absolute path to config file or null if not found
  */
 export function findConfigFile(fileName: string, startDir: string = process.cwd()): string | null {
+  // First try to find project root and search from there
+  const projectRoot = findProjectRoot(startDir);
+  if (projectRoot) {
+    const configFromProjectRoot = findConfigFileFromDir(fileName, projectRoot);
+    if (configFromProjectRoot) {
+      return configFromProjectRoot;
+    }
+  }
+
+  // Fallback to searching from the original start directory
+  return findConfigFileFromDir(fileName, startDir);
+}
+
+/**
+ * Find config file by traversing up from a specific directory
+ * @param fileName - Name of the config file to find
+ * @param startDir - Directory to start searching from
+ * @returns Absolute path to config file or null if not found
+ */
+function findConfigFileFromDir(fileName: string, startDir: string): string | null {
   let currentDir = resolve(startDir);
 
   while (true) {

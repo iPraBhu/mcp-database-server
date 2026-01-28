@@ -1,6 +1,6 @@
 # Quick Start Guide
 
-This guide will help you get up and running with @adevguide/mcp-database-server in minutes.
+This guide will help you get up and running with mcp-database-server in minutes.
 
 ## Prerequisites
 
@@ -96,7 +96,7 @@ Add to your Claude Desktop config file:
 }
 ```
 
-> **Note:** The `--config` argument is optional. If omitted, the server will automatically search for `.mcp-database-server.config` starting from the current directory and moving up through parent directories.
+> **Note:** The `--config` argument is optional. If omitted, the server will automatically search for `.mcp-database-server.config` starting from your project root (detected by looking for `package.json`, `.git`, etc.) and moving up through parent directories.
 
 ### Other MCP Clients
 
