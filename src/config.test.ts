@@ -41,8 +41,24 @@ describe('findProjectRoot', () => {
   });
 
   it('should return null when no project markers found', () => {
-    const found = findProjectRoot(subDir2);
-    expect(found).toBeNull();
+    // Create a temp directory outside the project
+    const tempDir = join(process.cwd(), '..', 'temp-test-dir');
+    const tempSubDir = join(tempDir, 'subdir');
+    
+    // Clean up if exists
+    if (existsSync(tempDir)) {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+    
+    try {
+      mkdirSync(tempSubDir, { recursive: true });
+      const found = findProjectRoot(tempSubDir);
+      expect(found).toBeNull();
+    } finally {
+      if (existsSync(tempDir)) {
+        rmSync(tempDir, { recursive: true, force: true });
+      }
+    }
   });
 });
 

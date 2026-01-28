@@ -5,6 +5,7 @@ import {
   ListToolsRequestSchema,
   ListResourcesRequestSchema,
   ReadResourceRequestSchema,
+  InitializeRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 import { DatabaseManager } from './database-manager.js';
 import { ServerConfig } from './types.js';
@@ -36,6 +37,24 @@ export class MCPServer {
   }
 
   private setupHandlers(): void {
+    // Handle initialization
+    this.server.setRequestHandler(InitializeRequestSchema, async (request) => {
+      const { protocolVersion } = request.params;
+      this.logger.info({ protocolVersion }, 'MCP server initializing');
+
+      return {
+        protocolVersion,
+        capabilities: {
+          tools: {},
+          resources: {},
+        },
+        serverInfo: {
+          name: 'mcp-database-server',
+          version: '1.0.0',
+        },
+      };
+    });
+
     // List available tools
     this.server.setRequestHandler(ListToolsRequestSchema, async () => ({
       tools: [
@@ -712,8 +731,11 @@ export class MCPServer {
   }
 
   async start(): Promise<void> {
+    console.error('Starting MCP server...');
     const transport = new StdioServerTransport();
+    console.error('Created transport, connecting...');
     await this.server.connect(transport);
+    console.error('MCP server connected and started');
     this.logger.info('MCP server started');
   }
 }
