@@ -11,7 +11,6 @@ import {
   ExplainResult
 } from './types.js';
 import { extractTableNames } from './utils.js';
-import { getLogger } from './logger.js';
 
 export interface QueryOptimizerOptions {
   slowQueryThresholdMs: number;
@@ -20,10 +19,7 @@ export interface QueryOptimizerOptions {
 }
 
 export class QueryOptimizer {
-  private logger = getLogger();
   private slowQueryThresholdMs: number;
-  private maxHistoryForAnalysis: number;
-  private enableAutoAnalysis: boolean;
   private slowQueryAlerts = new Map<string, SlowQueryAlert[]>();
 
   constructor(options: QueryOptimizerOptions = {
@@ -32,8 +28,6 @@ export class QueryOptimizer {
     enableAutoAnalysis: true
   }) {
     this.slowQueryThresholdMs = options.slowQueryThresholdMs;
-    this.maxHistoryForAnalysis = options.maxHistoryForAnalysis;
-    this.enableAutoAnalysis = options.enableAutoAnalysis;
   }
 
   /**
@@ -155,7 +149,7 @@ export class QueryOptimizer {
    * Profile query performance using EXPLAIN plan
    */
   async profileQueryPerformance(
-    dbId: string,
+    _dbId: string,
     sql: string,
     explainResult: ExplainResult,
     executionTimeMs: number,
