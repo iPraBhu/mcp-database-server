@@ -34,9 +34,11 @@ export class SchemaCache {
 
   async init(): Promise<void> {
     try {
+      this.logger.info({ cacheDir: this._cacheDir }, 'Initializing schema cache directory');
       await fs.mkdir(this._cacheDir, { recursive: true });
       this.logger.info({ cacheDir: this._cacheDir }, 'Schema cache initialized');
     } catch (error: any) {
+      this.logger.error({ cacheDir: this._cacheDir, error: error.message }, 'Failed to initialize cache directory');
       throw new CacheError('Failed to initialize cache directory', error);
     }
   }
