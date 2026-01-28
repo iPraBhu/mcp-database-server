@@ -20,7 +20,7 @@ export class MSSQLAdapter extends BaseAdapter {
     return new Promise((resolve, reject) => {
       try {
         // Parse connection string
-        const config = this.parseConnectionString(this.config.url!);
+        const config = this.parseConnectionString(this._config.url!);
 
         this.connection = new Connection(config);
 
@@ -29,7 +29,7 @@ export class MSSQLAdapter extends BaseAdapter {
             reject(err);
           } else {
             this.connected = true;
-            this.logger.info({ dbId: this.config.id }, 'SQL Server connected');
+            this.logger.info({ dbId: this._config.id }, 'SQL Server connected');
             resolve();
           }
         });
@@ -86,7 +86,7 @@ export class MSSQLAdapter extends BaseAdapter {
       this.connection.close();
       this.connection = undefined;
       this.connected = false;
-      this.logger.info({ dbId: this.config.id }, 'SQL Server disconnected');
+      this.logger.info({ dbId: this._config.id }, 'SQL Server disconnected');
     }
   }
 
@@ -119,7 +119,7 @@ export class MSSQLAdapter extends BaseAdapter {
     try {
       const schemas = await this.getSchemas(options);
       const dbSchema: DatabaseSchema = {
-        dbId: this.config.id,
+        dbId: this._config.id,
         dbType: 'mssql',
         schemas,
         introspectedAt: new Date(),

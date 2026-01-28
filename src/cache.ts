@@ -28,14 +28,14 @@ export class SchemaCache {
   private introspectionLocks = new Map<string, Promise<void>>();
 
   constructor(
-    private cacheDir: string,
-    private defaultTtlMinutes: number
+    private _cacheDir: string,
+    private _defaultTtlMinutes: number
   ) {}
 
   async init(): Promise<void> {
     try {
-      await fs.mkdir(this.cacheDir, { recursive: true });
-      this.logger.info({ cacheDir: this.cacheDir }, 'Schema cache initialized');
+      await fs.mkdir(this._cacheDir, { recursive: true });
+      this.logger.info({ cacheDir: this._cacheDir }, 'Schema cache initialized');
     } catch (error: any) {
       throw new CacheError('Failed to initialize cache directory', error);
     }
@@ -73,7 +73,7 @@ export class SchemaCache {
       schema,
       relationships: this.buildRelationships(schema),
       cachedAt: new Date(),
-      ttlMinutes: ttlMinutes || this.defaultTtlMinutes,
+      ttlMinutes: ttlMinutes || this._defaultTtlMinutes,
     };
 
     this.cache.set(dbId, entry);
@@ -102,11 +102,11 @@ export class SchemaCache {
     } else {
       this.cache.clear();
       try {
-        const files = await fs.readdir(this.cacheDir);
+        const files = await fs.readdir(this._cacheDir);
         await Promise.all(
           files
             .filter((f) => f.endsWith('.json'))
-            .map((f) => fs.unlink(path.join(this.cacheDir, f)))
+            .map((f) => fs.unlink(path.join(this._cacheDir, f)))
         );
       } catch (error) {
         this.logger.warn({ error }, 'Failed to clear cache directory');
@@ -239,7 +239,7 @@ export class SchemaCache {
   }
 
   private getCacheFilePath(dbId: string): string {
-    return path.join(this.cacheDir, `${dbId}.json`);
+    return path.join(this._cacheDir, `${dbId}.json`);
   }
 
   private async loadFromDisk(dbId: string): Promise<CacheEntry | null> {
@@ -269,7 +269,7 @@ export class SchemaCache {
 
   private async getPersistedDbIds(): Promise<string[]> {
     try {
-      const files = await fs.readdir(this.cacheDir);
+      const files = await fs.readdir(this._cacheDir);
       return files
         .filter((f) => f.endsWith('.json'))
         .map((f) => f.replace('.json', ''));

@@ -20,7 +20,7 @@ export class DatabaseManager {
   private queryTracker = new QueryTracker();
 
   constructor(
-    private configs: DatabaseConfig[],
+    private _configs: DatabaseConfig[],
     private options: DatabaseManagerOptions
   ) {
     this.cache = new SchemaCache(options.cacheDir, options.cacheTtlMinutes);
@@ -30,7 +30,7 @@ export class DatabaseManager {
     await this.cache.init();
 
     // Create adapters
-    for (const config of this.configs) {
+    for (const config of this._configs) {
       const adapter = createAdapter(config);
       this.adapters.set(config.id, adapter);
 
@@ -44,7 +44,7 @@ export class DatabaseManager {
       }
     }
 
-    this.logger.info({ databases: this.configs.length }, 'Database manager initialized');
+    this.logger.info({ databases: this._configs.length }, 'Database manager initialized');
   }
 
   async shutdown(): Promise<void> {
@@ -59,11 +59,11 @@ export class DatabaseManager {
   }
 
   getConfigs(): DatabaseConfig[] {
-    return this.configs;
+    return this._configs;
   }
 
   getConfig(dbId: string): DatabaseConfig | undefined {
-    return this.configs.find((c) => c.id === dbId);
+    return this._configs.find((c) => c.id === dbId);
   }
 
   private getAdapter(dbId: string): DatabaseAdapter {
@@ -187,8 +187,19 @@ export class DatabaseManager {
     try {
       const result = await adapter.query(sql, params, timeoutMs);
       
-      // Track query
-      this.queryTracker.track(dbId, sql, result.executionTimeMs, result.rowCount);
+      // Get EXPLAIN plan for performance analysis (if not a write operation)
+      let explainPlan;
+      if (!isWriteOperation(sql)) {
+        try {
+          explainPlan = await adapter.explain(sql, params);
+        } catch (_explainError) {
+          // EXPLAIN might not be supported or might fail, continue without it
+          this.logger.debug({ dbId, sql }, 'EXPLAIN failed, continuing without performance analysis');
+        }
+      }
+      
+      // Track query with performance data
+      this.queryTracker.track(dbId, sql, result.executionTimeMs, result.rowCount, undefined, explainPlan);
 
       return result;
     } catch (error: any) {
@@ -224,5 +235,38 @@ export class DatabaseManager {
 
   getQueryHistory(dbId: string, limit?: number): any[] {
     return this.queryTracker.getHistory(dbId, limit);
+  }
+
+  getPerformanceAnalytics(dbId: string): any {
+    return this.queryTracker.getPerformanceAnalytics(dbId);
+  }
+
+  async getIndexRecommendations(dbId: string): Promise<any[]> {
+    const schema = await this.getSchema(dbId);
+    return this.queryTracker.getIndexRecommendations(dbId, schema);
+  }
+
+  getSlowQueryAlerts(dbId: string): any[] {
+    return this.queryTracker.getSlowQueryAlerts(dbId);
+  }
+
+  async suggestQueryRewrite(dbId: string, sql: string): Promise<any> {
+    const schema = await this.getSchema(dbId);
+    return this.queryTracker.suggestQueryRewrite(sql, schema);
+  }
+
+  async profileQueryPerformance(dbId: string, sql: string, params: any[] = []): Promise<any> {
+    await this.ensureConnected(dbId);
+    const adapter = this.getAdapter(dbId);
+    
+    // Execute query to get timing
+    const startTime = Date.now();
+    const result = await adapter.query(sql, params);
+    const executionTimeMs = Date.now() - startTime;
+    
+    // Get EXPLAIN plan
+    const explainResult = await adapter.explain(sql, params);
+    
+    return this.queryTracker.profileQueryPerformance(dbId, sql, explainResult, executionTimeMs, result.rowCount);
   }
 }

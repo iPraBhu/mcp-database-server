@@ -45,7 +45,7 @@ This is a production-ready Model Context Protocol (MCP) server that provides uni
   - Requires Oracle Instant Client
   - Clear TODO markers for implementation
 
-### MCP Tools (9 total) ✅
+### MCP Tools (14 total) ✅
 1. **list_databases** - List all configured databases with status
 2. **introspect_schema** - Introspect and cache database schema
 3. **get_schema** - Retrieve cached schema metadata

@@ -156,6 +156,85 @@ export interface QueryHistoryEntry {
   executionTimeMs: number;
   rowCount: number;
   error?: string;
+  explainPlan?: any; // Execution plan for performance analysis
+  queryComplexity?: QueryComplexity; // Complexity metrics
+  suggestedIndexes?: IndexRecommendation[]; // Index suggestions
+  rewrittenQuery?: string; // Optimized query suggestion
+  performanceScore?: number; // 0-100 performance score
+}
+
+// Query complexity analysis
+export interface QueryComplexity {
+  selectColumns: number;
+  whereConditions: number;
+  joinCount: number;
+  subqueryCount: number;
+  hasAggregations: boolean;
+  hasDistinct: boolean;
+  hasOrderBy: boolean;
+  hasGroupBy: boolean;
+  estimatedComplexity: 'simple' | 'medium' | 'complex' | 'very_complex';
+}
+
+// Index recommendation
+export interface IndexRecommendation {
+  table: string;
+  columns: string[];
+  type: 'single' | 'composite' | 'covering';
+  reason: string;
+  impact: 'high' | 'medium' | 'low';
+  existingIndex?: string; // If similar index already exists
+}
+
+// Query performance profile
+export interface QueryPerformanceProfile {
+  queryId: string;
+  sql: string;
+  executionTimeMs: number;
+  rowCount: number;
+  bottlenecks: PerformanceBottleneck[];
+  recommendations: PerformanceRecommendation[];
+  overallScore: number; // 0-100
+}
+
+// Performance bottleneck
+export interface PerformanceBottleneck {
+  type: 'table_scan' | 'index_scan' | 'sort' | 'join' | 'subquery' | 'aggregation';
+  severity: 'critical' | 'high' | 'medium' | 'low';
+  description: string;
+  estimatedCost: number;
+  table?: string;
+  columns?: string[];
+}
+
+// Performance recommendation
+export interface PerformanceRecommendation {
+  type: 'add_index' | 'rewrite_query' | 'optimize_join' | 'add_where_clause' | 'use_union' | 'materialize_view';
+  description: string;
+  sql?: string; // Suggested SQL change
+  impact: 'high' | 'medium' | 'low';
+  effort: 'low' | 'medium' | 'high';
+}
+
+// Slow query alert
+export interface SlowQueryAlert {
+  dbId: string;
+  queryId: string;
+  sql: string;
+  executionTimeMs: number;
+  thresholdMs: number;
+  timestamp: Date;
+  frequency: number; // How many times this query has been slow
+  recommendations: PerformanceRecommendation[];
+}
+
+// Query optimization result
+export interface QueryOptimizationResult {
+  originalQuery: string;
+  optimizedQuery: string;
+  improvements: string[];
+  performanceGain: number; // Estimated percentage improvement
+  confidence: 'high' | 'medium' | 'low';
 }
 
 // Join suggestion
@@ -184,9 +263,9 @@ export interface DatabaseAdapter {
 export class DatabaseError extends Error {
   constructor(
     message: string,
-    public code: string,
-    public dbId?: string,
-    public originalError?: Error
+    public _code: string,
+    public _dbId?: string,
+    public _originalError?: Error
   ) {
     super(message);
     this.name = 'DatabaseError';
@@ -194,14 +273,14 @@ export class DatabaseError extends Error {
 }
 
 export class ConfigError extends Error {
-  constructor(message: string, public details?: any) {
+  constructor(message: string, public _details?: any) {
     super(message);
     this.name = 'ConfigError';
   }
 }
 
 export class CacheError extends Error {
-  constructor(message: string, public originalError?: Error) {
+  constructor(message: string, public _originalError?: Error) {
     super(message);
     this.name = 'CacheError';
   }

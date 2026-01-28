@@ -1,20 +1,37 @@
-# MCP Database Server
+# @adevguide/mcp-database-server
 
-> **Enterprise-grade Model Context Protocol server for unified SQL database access**
+[![npm version](https://img.shields.io/npm/v/%40adevguide%2Fmcp-database-server)](https://www.npmjs.com/package/@adevguide/mcp-database-server)
+[![npm downloads](https://img.shields.io/npm/dm/%40adevguide%2Fmcp-database-server)](https://www.npmjs.com/package/@adevguide/mcp-database-server)
 
-A production-ready MCP server that provides seamless, intelligent access to multiple SQL databases with automatic schema discovery, relationship mapping, and built-in security controls.
+Production-grade Model Context Protocol (MCP) server for unified SQL database access. Connect multiple databases through a single MCP server with schema discovery, relationship mapping, caching, and safety controls.
+
+- npm: https://www.npmjs.com/package/@adevguide/mcp-database-server
+- GitHub: https://github.com/iPraBhu/mcp-database-server
+
+## Contents
+
+- [Features](#features)
+- [Why this exists](#why-this-exists)
+- [Installation](#installation)
+- [Configuration](#configuration)
+- [MCP client integration](#mcp-client-integration)
 
 ## Features
 
-- 🗄️ **Multi-Database Support** - PostgreSQL, MySQL/MariaDB, SQLite, SQL Server, Oracle
-- 🔍 **Automatic Schema Discovery** - Tables, columns, indexes, foreign keys, and relationships
-- 💾 **Intelligent Caching** - Persistent schema cache with TTL and version management
-- 🔗 **Relationship Inference** - Automatic foreign key detection plus heuristic pattern matching
-- 📊 **Query Intelligence** - Execution tracking, statistics, and performance insights
-- 🎯 **Join Assistance** - Smart join path recommendations based on relationship graphs
-- 🔒 **Enterprise Security** - Read-only mode, operation controls, dangerous operation protection, secret redaction
-- ⚡ **High Performance** - Connection pooling, query timeouts, concurrent operation protection
-- 🌐 **Environment Flexibility** - Environment variable interpolation for secure configuration
+- Multi-database support: PostgreSQL, MySQL/MariaDB, SQLite, SQL Server, Oracle
+- Automatic schema discovery: tables, columns, indexes, foreign keys, relationships
+- Persistent schema caching: TTL + versioning, manual refresh, cache stats
+- Relationship inference: foreign keys + heuristics
+- Query intelligence: tracking, statistics, timeouts
+- Join assistance: suggested join paths based on relationship graphs
+- Safety controls: read-only mode, allow/deny write operations, secret redaction
+- **Query optimization**: index recommendations, performance profiling, slow query detection
+- **Performance monitoring**: detailed execution analytics, bottleneck identification
+- **Query rewriting**: automated optimization suggestions with performance impact estimates
+
+## Why this exists
+
+This project was originally vibe-coded to solve real issues I was facing when wiring LLM tools to multiple SQL databases (consistent connectivity, schema discovery, and safe query execution). It has since been hardened into a reusable MCP server with caching and security defaults.
 
 ## Architecture
 
@@ -54,34 +71,31 @@ A production-ready MCP server that provides seamless, intelligent access to mult
 
 ## Installation
 
-### Method 1: Install from npm (Recommended)
-
-If this package is published to npm:
+### Global install (recommended)
 
 ```bash
-npm install -g mcp-database-server
+npm install -g @adevguide/mcp-database-server
 ```
 
-Then you can run it directly:
+Run:
 
 ```bash
-mcp-database-server --config /path/to/your/config.json
+mcp-database-server --config /absolute/path/to/.mcp-database-server.config
 ```
 
-### Method 2: Install from source
+### Run via npx (no global install)
 
-Clone and build the project:
+```bash
+npx -y @adevguide/mcp-database-server --config /absolute/path/to/.mcp-database-server.config
+```
+
+### Install from source
 
 ```bash
 git clone https://github.com/iPraBhu/mcp-database-server.git
 cd mcp-database-server
 npm install
 npm run build
-```
-
-Then run it:
-
-```bash
 node dist/index.js --config ./.mcp-database-server.config
 ```
 
@@ -478,7 +492,7 @@ $PWD.Path  # prints: C:\Users\username\projects\mcp-database-server
 
 ## Available MCP Tools
 
-This server provides 9 tools for comprehensive database interaction.
+This server provides 14 tools for comprehensive database interaction and optimization.
 
 ### Tool Reference
 
@@ -493,6 +507,11 @@ This server provides 9 tools for comprehensive database interaction.
 | `clear_cache` | Clear schema cache and statistics | No | Clears cache |
 | `cache_status` | View cache health and statistics | No | Reads cache |
 | `health_check` | Test database connectivity | No | No cache |
+| `analyze_performance` | Get detailed performance analytics | No | Uses stats |
+| `suggest_indexes` | Analyze queries and recommend indexes | No | Uses stats |
+| `detect_slow_queries` | Identify and alert on slow queries | No | Uses stats |
+| `rewrite_query` | Suggest optimized query versions | No | Uses cache |
+| `profile_query` | Profile query performance with bottlenecks | No | No cache |
 
 <sub>* Requires `allowWrite: true` and respects security settings</sub>
 
@@ -814,53 +833,165 @@ Tests database connectivity and returns status information.
 
 ---
 
-### `cache_status`
+### 10. analyze_performance
 
-Get cache status and statistics.
+Get comprehensive performance analytics across all queries for a database.
 
-**Input:**
+**Input Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `dbId` | string | Yes | Database to analyze |
+
+**Response:**
 ```json
 {
-  "dbId": "postgres-main"
+  "totalQueries": 1250,
+  "slowQueries": 23,
+  "avgExecutionTime": 45.67,
+  "p95ExecutionTime": 234.5,
+  "errorRate": 1.2,
+  "mostFrequentTables": [
+    { "table": "users", "count": 456 },
+    { "table": "orders", "count": 234 }
+  ],
+  "performanceTrend": "improving"
 }
 ```
 
-**Output:**
+---
+
+### 11. suggest_indexes
+
+Analyze query patterns and recommend optimal database indexes.
+
+**Input Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `dbId` | string | Yes | Database to analyze |
+
+**Response:**
 ```json
 [
   {
-    "dbId": "postgres-main",
-    "exists": true,
-    "age": 45000,
-    "ttlMinutes": 10,
-    "expired": false,
-    "version": "abc123",
-    "tableCount": 15,
-    "relationshipCount": 12
+    "table": "orders",
+    "columns": ["customer_id", "order_date"],
+    "type": "composite",
+    "reason": "Frequently used in WHERE and JOIN conditions",
+    "impact": "high"
+  },
+  {
+    "table": "products",
+    "columns": ["category_id"],
+    "type": "single",
+    "reason": "Column category_id is frequently queried",
+    "impact": "medium"
   }
 ]
 ```
 
-### `health_check`
+---
 
-Check database connectivity and version information.
+### 12. detect_slow_queries
 
-**Input:**
-```json
-{
-  "dbId": "postgres-main"
-}
-```
+Identify queries that exceed performance thresholds and provide alerts.
 
-**Output:**
+**Input Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `dbId` | string | Yes | Database to analyze |
+
+**Response:**
 ```json
 [
   {
     "dbId": "postgres-main",
-    "healthy": true,
-    "version": "PostgreSQL 15.3"
+    "queryId": "a1b2c3",
+    "sql": "SELECT * FROM large_table WHERE slow_column = ?",
+    "executionTimeMs": 2500,
+    "thresholdMs": 1000,
+    "timestamp": "2024-01-27T10:30:00Z",
+    "frequency": 5,
+    "recommendations": [
+      {
+        "type": "add_index",
+        "description": "Add index on slow_column for better performance",
+        "impact": "high",
+        "effort": "medium"
+      }
+    ]
   }
 ]
+```
+
+---
+
+### 13. rewrite_query
+
+Suggest optimized versions of SQL queries with performance improvements.
+
+**Input Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `dbId` | string | Yes | Database ID |
+| `sql` | string | Yes | SQL query to optimize |
+
+**Response:**
+```json
+{
+  "originalQuery": "SELECT * FROM users WHERE active = 1",
+  "optimizedQuery": "SELECT id, name, email FROM users WHERE active = 1 LIMIT 1000",
+  "improvements": [
+    "Removed unnecessary SELECT *",
+    "Added LIMIT clause to prevent large result sets"
+  ],
+  "performanceGain": 35,
+  "confidence": "high"
+}
+```
+
+---
+
+### 14. profile_query
+
+Profile a specific query's performance with detailed bottleneck analysis.
+
+**Input Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `dbId` | string | Yes | Database ID |
+| `sql` | string | Yes | SQL query to profile |
+| `params` | array | No | Query parameters |
+
+**Response:**
+```json
+{
+  "queryId": "def456",
+  "sql": "SELECT u.name, COUNT(o.id) FROM users u JOIN orders o ON u.id = o.user_id GROUP BY u.id",
+  "executionTimeMs": 1250,
+  "rowCount": 5000,
+  "bottlenecks": [
+    {
+      "type": "join",
+      "severity": "high",
+      "description": "Nested loop join on large tables",
+      "estimatedCost": 150
+    }
+  ],
+  "recommendations": [
+    {
+      "type": "add_index",
+      "description": "Add index on orders.user_id",
+      "impact": "high",
+      "effort": "low"
+    }
+  ],
+  "overallScore": 65
+}
 ```
 
 ## Resources

@@ -16,8 +16,8 @@ export class MCPServer {
   private logger = getLogger();
 
   constructor(
-    private dbManager: DatabaseManager,
-    private config: ServerConfig
+    private _dbManager: DatabaseManager,
+    private _config: ServerConfig
   ) {
     this.server = new Server(
       {
@@ -217,6 +217,89 @@ export class MCPServer {
             },
           },
         },
+        {
+          name: 'analyze_performance',
+          description: 'Get detailed performance analytics for a database',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              dbId: {
+                type: 'string',
+                description: 'Database ID to analyze',
+              },
+            },
+            required: ['dbId'],
+          },
+        },
+        {
+          name: 'suggest_indexes',
+          description: 'Analyze query patterns and suggest optimal indexes',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              dbId: {
+                type: 'string',
+                description: 'Database ID to analyze',
+              },
+            },
+            required: ['dbId'],
+          },
+        },
+        {
+          name: 'detect_slow_queries',
+          description: 'Identify and alert on slow-running queries',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              dbId: {
+                type: 'string',
+                description: 'Database ID to analyze',
+              },
+            },
+            required: ['dbId'],
+          },
+        },
+        {
+          name: 'rewrite_query',
+          description: 'Suggest optimized versions of SQL queries',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              dbId: {
+                type: 'string',
+                description: 'Database ID',
+              },
+              sql: {
+                type: 'string',
+                description: 'SQL query to optimize',
+              },
+            },
+            required: ['dbId', 'sql'],
+          },
+        },
+        {
+          name: 'profile_query',
+          description: 'Profile query performance with detailed analysis',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              dbId: {
+                type: 'string',
+                description: 'Database ID',
+              },
+              sql: {
+                type: 'string',
+                description: 'SQL query to profile',
+              },
+              params: {
+                type: 'array',
+                description: 'Query parameters',
+                items: {},
+              },
+            },
+            required: ['dbId', 'sql'],
+          },
+        },
       ],
     }));
 
@@ -253,6 +336,21 @@ export class MCPServer {
           case 'health_check':
             return await this.handleHealthCheck(args as any);
 
+          case 'analyze_performance':
+            return await this.handleAnalyzePerformance(args as any);
+
+          case 'suggest_indexes':
+            return await this.handleSuggestIndexes(args as any);
+
+          case 'detect_slow_queries':
+            return await this.handleDetectSlowQueries(args as any);
+
+          case 'rewrite_query':
+            return await this.handleRewriteQuery(args as any);
+
+          case 'profile_query':
+            return await this.handleProfileQuery(args as any);
+
           default:
             throw new Error(`Unknown tool: ${name}`);
         }
@@ -274,7 +372,7 @@ export class MCPServer {
 
     // List resources (cached schemas)
     this.server.setRequestHandler(ListResourcesRequestSchema, async () => {
-      const statuses = await this.dbManager.getCacheStatus();
+      const statuses = await this._dbManager.getCacheStatus();
       const resources = statuses
         .filter((s) => s.exists)
         .map((s) => ({
@@ -297,7 +395,7 @@ export class MCPServer {
       }
 
       const dbId = match[1];
-      const cacheEntry = await this.dbManager.getSchema(dbId);
+      const cacheEntry = await this._dbManager.getSchema(dbId);
 
       return {
         contents: [
@@ -312,16 +410,16 @@ export class MCPServer {
   }
 
   private async handleListDatabases() {
-    const configs = this.dbManager.getConfigs();
+    const configs = this._dbManager.getConfigs();
     const statuses = await Promise.all(
       configs.map(async (config) => {
-        const connected = await this.dbManager.testConnection(config.id);
-        const cacheStatus = (await this.dbManager.getCacheStatus(config.id))[0];
+        const connected = await this._dbManager.testConnection(config.id);
+        const cacheStatus = (await this._dbManager.getCacheStatus(config.id))[0];
 
         return {
           id: config.id,
           type: config.type,
-          url: this.config.security?.redactSecrets ? redactUrl(config.url || '') : config.url,
+          url: this._config.security?.redactSecrets ? redactUrl(config.url || '') : config.url,
           connected,
           cached: cacheStatus?.exists || false,
           cacheAge: cacheStatus?.age,
@@ -345,7 +443,7 @@ export class MCPServer {
     forceRefresh?: boolean;
     schemaFilter?: any;
   }) {
-    const result = await this.dbManager.introspectSchema(
+    const result = await this._dbManager.introspectSchema(
       args.dbId,
       args.forceRefresh || false,
       args.schemaFilter
@@ -375,7 +473,7 @@ export class MCPServer {
   }
 
   private async handleGetSchema(args: { dbId: string; schema?: string; table?: string }) {
-    const cacheEntry = await this.dbManager.getSchema(args.dbId);
+    const cacheEntry = await this._dbManager.getSchema(args.dbId);
     let result: any = cacheEntry.schema;
 
     // Filter by schema
@@ -421,11 +519,11 @@ export class MCPServer {
       sql += ` LIMIT ${args.limit}`;
     }
 
-    const result = await this.dbManager.runQuery(args.dbId, sql, args.params, args.timeoutMs);
+    const result = await this._dbManager.runQuery(args.dbId, sql, args.params, args.timeoutMs);
 
     // Get relevant relationships for the query
-    const cacheEntry = await this.dbManager.getSchema(args.dbId);
-    const queryStats = this.dbManager.getQueryStats(args.dbId);
+    const cacheEntry = await this._dbManager.getSchema(args.dbId);
+    const queryStats = this._dbManager.getQueryStats(args.dbId);
 
     return {
       content: [
@@ -454,7 +552,7 @@ export class MCPServer {
   }
 
   private async handleExplainQuery(args: { dbId: string; sql: string; params?: any[] }) {
-    const result = await this.dbManager.explainQuery(args.dbId, args.sql, args.params);
+    const result = await this._dbManager.explainQuery(args.dbId, args.sql, args.params);
 
     return {
       content: [
@@ -467,7 +565,7 @@ export class MCPServer {
   }
 
   private async handleSuggestJoins(args: { dbId: string; tables: string[] }) {
-    const joinPaths = await this.dbManager.suggestJoins(args.dbId, args.tables);
+    const joinPaths = await this._dbManager.suggestJoins(args.dbId, args.tables);
 
     return {
       content: [
@@ -480,7 +578,7 @@ export class MCPServer {
   }
 
   private async handleClearCache(args: { dbId?: string }) {
-    await this.dbManager.clearCache(args.dbId);
+    await this._dbManager.clearCache(args.dbId);
 
     return {
       content: [
@@ -496,7 +594,7 @@ export class MCPServer {
   }
 
   private async handleCacheStatus(args: { dbId?: string }) {
-    const statuses = await this.dbManager.getCacheStatus(args.dbId);
+    const statuses = await this._dbManager.getCacheStatus(args.dbId);
 
     return {
       content: [
@@ -510,14 +608,14 @@ export class MCPServer {
 
   private async handleHealthCheck(args: { dbId?: string }) {
     const configs = args.dbId
-      ? [this.dbManager.getConfig(args.dbId)!]
-      : this.dbManager.getConfigs();
+      ? [this._dbManager.getConfig(args.dbId)!]
+      : this._dbManager.getConfigs();
 
     const results = await Promise.all(
       configs.map(async (config) => {
         try {
-          const connected = await this.dbManager.testConnection(config.id);
-          const version = connected ? await this.dbManager.getVersion(config.id) : 'N/A';
+          const connected = await this._dbManager.testConnection(config.id);
+          const version = connected ? await this._dbManager.getVersion(config.id) : 'N/A';
 
           return {
             dbId: config.id,
@@ -539,6 +637,75 @@ export class MCPServer {
         {
           type: 'text',
           text: JSON.stringify(results, null, 2),
+        },
+      ],
+    };
+  }
+
+  private async handleAnalyzePerformance(args: { dbId: string }) {
+    const analytics = this._dbManager.getPerformanceAnalytics(args.dbId);
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify(analytics, null, 2),
+        },
+      ],
+    };
+  }
+
+  private async handleSuggestIndexes(args: { dbId: string }) {
+    const recommendations = await this._dbManager.getIndexRecommendations(args.dbId);
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify(recommendations, null, 2),
+        },
+      ],
+    };
+  }
+
+  private async handleDetectSlowQueries(args: { dbId: string }) {
+    const alerts = this._dbManager.getSlowQueryAlerts(args.dbId);
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify(alerts, null, 2),
+        },
+      ],
+    };
+  }
+
+  private async handleRewriteQuery(args: { dbId: string; sql: string }) {
+    const suggestion = await this._dbManager.suggestQueryRewrite(args.dbId, args.sql);
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify(suggestion, null, 2),
+        },
+      ],
+    };
+  }
+
+  private async handleProfileQuery(args: {
+    dbId: string;
+    sql: string;
+    params?: any[];
+  }) {
+    const profile = await this._dbManager.profileQueryPerformance(args.dbId, args.sql, args.params);
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify(profile, null, 2),
         },
       ],
     };

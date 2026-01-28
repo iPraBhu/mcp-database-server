@@ -21,7 +21,7 @@ export class OracleAdapter extends BaseAdapter {
 
   async connect(): Promise<void> {
     this.logger.warn(
-      { dbId: this.config.id },
+      { dbId: this._config.id },
       'Oracle adapter is not fully implemented. Requires Oracle Instant Client and oracledb package.'
     );
     
@@ -32,8 +32,8 @@ export class OracleAdapter extends BaseAdapter {
     //   user: config.user,
     //   password: config.password,
     //   connectString: config.connectString,
-    //   poolMin: this.config.pool?.min || 2,
-    //   poolMax: this.config.pool?.max || 10,
+    //   poolMin: this._config.pool?.min || 2,
+    //   poolMax: this._config.pool?.max || 10,
     // });
     
     throw new Error(

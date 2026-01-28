@@ -1,0 +1,72 @@
+# Source files (only dist/ is published)
+src/
+*.test.ts
+*.spec.ts
+
+# Build artifacts
+tsconfig.tsbuildinfo
+.tsup/
+
+# Development
+.env
+.env.*
+!.env.example
+
+# Tests
+coverage/
+.vitest/
+vitest.config.ts
+
+# Config files
+tsconfig.json
+tsup.config.ts
+eslint.config.js
+.prettierrc
+.editorconfig
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# CI/CD
+.github/
+.vscode/
+
+# Documentation (keep README.md, exclude others)
+CONTRIBUTING.md
+PUBLISHING.md
+QUICKSTART.md
+ARCHITECTURE.md
+PROJECT_SUMMARY.md
+CHANGELOG.md
+
+# Cache
+.sql-mcp-cache/
+.test-cache/
+*.log
+
+# IDE
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+tmp/
+temp/
+
+# Example configs (keep the .example, exclude actual configs)
+.mcp-database-server.config
+mcp.json
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
