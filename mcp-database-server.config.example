@@ -3,7 +3,7 @@
     {
       "id": "postgres-main",
       "type": "postgres",
-      "url": "${DB_URL_POSTGRES}",
+      "secretRef": "DB_URL_POSTGRES",
       "readOnly": false,
       "pool": {
         "min": 2,
@@ -21,7 +21,7 @@
     {
       "id": "mysql-analytics",
       "type": "mysql",
-      "url": "${DB_URL_MYSQL}",
+      "credentialCommand": "op read op://analytics/mysql/url",
       "readOnly": true,
       "pool": {
         "min": 1,

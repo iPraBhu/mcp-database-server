@@ -102,4 +102,81 @@ describe('DatabaseManager Security', () => {
       expect(manager.getConfig('test')).toBeDefined();
     });
   });
+
+  describe('query safety and introspection defaults', () => {
+    it('should block writes when global allowWrite is false even if the database is writable', async () => {
+      const manager = new DatabaseManager(mockConfig, {
+        cacheDir: '.test-cache',
+        cacheTtlMinutes: 10,
+        allowWrite: false,
+        disableDangerousOperations: false,
+      });
+
+      await expect(
+        manager.runQuery('test-db', 'INSERT INTO users VALUES (1, "test")')
+      ).rejects.toThrow('Write operations are not allowed');
+    });
+
+    it('should block explain on write statements', async () => {
+      const manager = new DatabaseManager(mockConfig, {
+        cacheDir: '.test-cache',
+        cacheTtlMinutes: 10,
+        allowWrite: true,
+        disableDangerousOperations: false,
+      });
+
+      await expect(
+        manager.explainQuery('test-db', 'DELETE FROM users WHERE id = 1')
+      ).rejects.toThrow('Only read-only SELECT queries can be explained or profiled');
+    });
+
+    it('should block profiling on write statements', async () => {
+      const manager = new DatabaseManager(mockConfig, {
+        cacheDir: '.test-cache',
+        cacheTtlMinutes: 10,
+        allowWrite: true,
+        disableDangerousOperations: false,
+      });
+
+      await expect(
+        manager.profileQueryPerformance('test-db', 'UPDATE users SET name = "x"')
+      ).rejects.toThrow('Only read-only SELECT queries can be explained or profiled');
+    });
+
+    it('should honor configured introspection options instead of treating maxTables as cache TTL', async () => {
+      const manager = new DatabaseManager(
+        [
+          {
+            id: 'schema-db',
+            type: 'sqlite',
+            path: ':memory:',
+            readOnly: false,
+            introspection: {
+              includeViews: false,
+              maxTables: 1,
+            },
+          },
+        ],
+        {
+          cacheDir: '.test-cache',
+          cacheTtlMinutes: 10,
+          allowWrite: true,
+          disableDangerousOperations: false,
+        }
+      );
+
+      await manager.init();
+      await manager.runQuery('schema-db', 'CREATE TABLE users (id INTEGER PRIMARY KEY)');
+      await manager.runQuery('schema-db', 'CREATE VIEW active_users AS SELECT id FROM users');
+
+      const schema = await manager.getSchema('schema-db');
+      const status = (await manager.getCacheStatus('schema-db'))[0];
+
+      expect(schema.schema.schemas[0].tables).toHaveLength(1);
+      expect(schema.schema.schemas[0].tables[0].name).toBe('users');
+      expect(status.ttlMinutes).toBe(10);
+
+      await manager.shutdown();
+    });
+  });
 });

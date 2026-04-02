@@ -80,10 +80,11 @@ export class SchemaCache {
 
     this.cache.set(dbId, entry);
 
-    // Persist to disk asynchronously
-    this.saveToDisk(dbId, entry).catch((error) => {
+    try {
+      await this.saveToDisk(dbId, entry);
+    } catch (error) {
       this.logger.error({ dbId, error }, 'Failed to save cache to disk');
-    });
+    }
   }
 
   /**

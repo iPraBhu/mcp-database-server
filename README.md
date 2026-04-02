@@ -111,7 +111,7 @@ Create a `.mcp-database-server.config` file in your project root:
     {
       "id": "postgres-main",
       "type": "postgres",
-      "url": "${DB_URL_POSTGRES}",
+      "secretRef": "DB_URL_POSTGRES",
       "readOnly": false,
       "pool": {
         "min": 2,
@@ -158,7 +158,9 @@ Each database in the `databases` array represents a connection to a SQL database
 |----------|------|----------|---------|-------------|
 | `id` | string | ✅ Yes | - | Unique identifier for this database connection. Used in all MCP tool calls. Must be unique across all databases. |
 | `type` | enum | ✅ Yes | - | Database system type. Valid values: `postgres`, `mysql`, `sqlite`, `mssql`, `oracle` |
-| `url` | string | Conditional* | - | Database connection string. Required for all databases except SQLite. Supports environment variable interpolation: `${DB_URL}` |
+| `url` | string | Conditional* | - | Explicit database connection string. Supports environment variable interpolation with `${DB_URL}` but is not the recommended secret-handling path. |
+| `secretRef` | string | Conditional* | - | Name of an environment variable that contains the full connection string. Resolved from the process environment or a `.env` file beside the config file. |
+| `credentialCommand` | string | Conditional* | - | Shell command that prints the full connection string to stdout at startup. Useful for 1Password, Vault, AWS helpers, or custom secret tooling. |
 | `path` | string | Conditional** | - | Filesystem path to SQLite database file. Required only for `type: sqlite`. Can be relative or absolute. |
 | `readOnly` | boolean | No | `true` | When `true`, blocks all write operations (INSERT, UPDATE, DELETE, etc.). Recommended for production safety. |
 | `eagerConnect` | boolean | No | `false` | When `true`, connects to database immediately at startup (fail-fast). When `false`, connects on first query (lazy loading). |
@@ -355,11 +357,11 @@ Controls log output verbosity and formatting.
 
 ---
 
-### Environment Variables
+### Secret Resolution
 
-**Secure Configuration with Environment Variables:**
+**Recommended approach: `secretRef`**
 
-The server supports environment variable interpolation using `${VARIABLE_NAME}` syntax. This is the recommended approach for managing sensitive credentials.
+Keep secrets out of the MCP client config and out of the server config values themselves.
 
 **Example Configuration:**
 ```json
@@ -368,11 +370,13 @@ The server supports environment variable interpolation using `${VARIABLE_NAME}` 
     {
       "id": "production-db",
       "type": "postgres",
-      "url": "${DATABASE_URL}"
+      "secretRef": "DATABASE_URL"
     }
   ]
 }
 ```
+
+The server resolves `secretRef` from the process environment first, and then from a `.env` file next to `.mcp-database-server.config`.
 
 **Environment File (`.env`):**
 ```env
@@ -380,6 +384,25 @@ DATABASE_URL=postgresql://user:password@localhost:5432/dbname
 DB_URL_MYSQL=mysql://user:password@localhost:3306/dbname
 DB_URL_MSSQL=Server=host,1433;Database=db;User Id=sa;Password=pass
 ```
+
+**Alternative: `credentialCommand`**
+```json
+{
+  "databases": [
+    {
+      "id": "analytics-db",
+      "type": "mysql",
+      "credentialCommand": "op read op://analytics/mysql/url"
+    }
+  ]
+}
+```
+
+The command must print only the connection string to stdout.
+
+**Still Supported: direct env interpolation**
+
+You can still write `"url": "${DATABASE_URL}"`, but `secretRef` is the cleaner option because it makes the secret source explicit.
 
 **Best Practices:**
 - ✅ Store `.env` file outside version control (add to `.gitignore`)
@@ -397,7 +420,6 @@ DB_URL_MSSQL=Server=host,1433;Database=db;User Id=sa;Password=pass
 | **MySQL** | `mysql://user:pass@host:port/db` | `mysql://root:password@localhost:3306/myapp` |
 | **SQL Server** | `Server=host,port;Database=db;User Id=user;Password=pass` | `Server=localhost,1433;Database=myapp;User Id=sa;Password=secret` |
 | **SQLite** | Use `path` property | `"path": "./data/app.db"` or `"path": "/var/db/app.sqlite"` |
-| **Oracle** | `user/pass@host:port/service` | `admin/secret@localhost:1521/XEPDB1` |
 
 **Additional Parameters:**
 
@@ -439,10 +461,7 @@ Server=host;Database=db;User Id=user;Password=pass;Encrypt=true;TrustServerCerti
   "mcpServers": {
     "database": {
       "command": "mcp-database-server",
-      "args": ["--config", "/absolute/path/to/.mcp-database-server.config"],
-      "env": {
-        "DATABASE_URL": "postgresql://user:pass@localhost:5432/db"
-      }
+      "args": ["--config", "/absolute/path/to/.mcp-database-server.config"]
     }
   }
 }
@@ -460,10 +479,7 @@ Server=host;Database=db;User Id=user;Password=pass;Encrypt=true;TrustServerCerti
         "/absolute/path/to/mcp-database-server/dist/index.js",
         "--config",
         "/absolute/path/to/.mcp-database-server.config"
-      ],
-      "env": {
-        "DATABASE_URL": "postgresql://user:pass@localhost:5432/db"
-      }
+      ]
     }
   }
 }
@@ -475,7 +491,7 @@ Server=host;Database=db;User Id=user;Password=pass;Encrypt=true;TrustServerCerti
 |----------|-------------|---------|
 | `command` | Executable to run. Use `mcp-database-server` for npm install, `node` for source install. | `"mcp-database-server"` |
 | `args` | Array of command-line arguments. First arg is usually `--config` followed by config file path. | `["--config", "/path/to/config"]` |
-| `env` | Environment variables passed to the server. Used for secure credential management. | `{"DATABASE_URL": "..."}` |
+| `env` | Optional environment variables passed to the server. Prefer `secretRef` with a local `.env` file or external secret tooling for DB credentials. | `{"APP_ENV": "production"}` |
 
 **Finding Absolute Paths:**
 ```bash

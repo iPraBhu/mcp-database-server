@@ -21,6 +21,7 @@ export interface QueryOptimizerOptions {
 export class QueryOptimizer {
   private slowQueryThresholdMs: number;
   private slowQueryAlerts = new Map<string, SlowQueryAlert[]>();
+  private processedSlowQueryCounts = new Map<string, number>();
 
   constructor(options: QueryOptimizerOptions = {
     slowQueryThresholdMs: 1000,
@@ -226,7 +227,11 @@ export class QueryOptimizer {
    * Detect and alert on slow queries
    */
   detectSlowQueries(queryHistory: QueryHistoryEntry[], dbId: string): SlowQueryAlert[] {
-    for (const entry of queryHistory) {
+    const processedCount = this.processedSlowQueryCounts.get(dbId) || 0;
+    const pendingHistory =
+      processedCount > queryHistory.length ? queryHistory : queryHistory.slice(processedCount);
+
+    for (const entry of pendingHistory) {
       if (entry.executionTimeMs > this.slowQueryThresholdMs) {
         const queryId = this.generateQueryId(entry.sql);
         const existingAlerts = this.slowQueryAlerts.get(dbId) || [];
@@ -255,6 +260,8 @@ export class QueryOptimizer {
         this.slowQueryAlerts.set(dbId, existingAlerts);
       }
     }
+
+    this.processedSlowQueryCounts.set(dbId, queryHistory.length);
 
     return this.slowQueryAlerts.get(dbId) || [];
   }
@@ -323,9 +330,11 @@ export class QueryOptimizer {
     if (queryHistory.length === 0) return analytics;
 
     // Calculate metrics
-    const executionTimes = queryHistory.map(q => q.executionTimeMs).sort((a, b) => a - b);
+    const executionTimes = queryHistory.map(q => q.executionTimeMs);
+    const sortedTimes = [...executionTimes].sort((a, b) => a - b);
     analytics.avgExecutionTime = executionTimes.reduce((a, b) => a + b, 0) / executionTimes.length;
-    analytics.p95ExecutionTime = executionTimes[Math.floor(executionTimes.length * 0.95)];
+    analytics.p95ExecutionTime =
+      sortedTimes[Math.min(sortedTimes.length - 1, Math.floor(sortedTimes.length * 0.95))];
     analytics.errorRate = (queryHistory.filter(q => q.error).length / queryHistory.length) * 100;
 
     // Table usage analysis
@@ -343,13 +352,28 @@ export class QueryOptimizer {
 
     // Performance trend (simple analysis of recent vs older queries)
     const midpoint = Math.floor(queryHistory.length / 2);
-    const recentAvg = executionTimes.slice(midpoint).reduce((a, b) => a + b, 0) / (executionTimes.length - midpoint);
-    const olderAvg = executionTimes.slice(0, midpoint).reduce((a, b) => a + b, 0) / midpoint;
+    if (midpoint > 0) {
+      const olderTimes = executionTimes.slice(0, midpoint);
+      const recentTimes = executionTimes.slice(midpoint);
+      const recentAvg = recentTimes.reduce((a, b) => a + b, 0) / recentTimes.length;
+      const olderAvg = olderTimes.reduce((a, b) => a + b, 0) / olderTimes.length;
 
-    if (recentAvg < olderAvg * 0.8) analytics.performanceTrend = 'improving';
-    else if (recentAvg > olderAvg * 1.2) analytics.performanceTrend = 'degrading';
+      if (recentAvg < olderAvg * 0.8) analytics.performanceTrend = 'improving';
+      else if (recentAvg > olderAvg * 1.2) analytics.performanceTrend = 'degrading';
+    }
 
     return analytics;
+  }
+
+  clear(dbId?: string): void {
+    if (dbId) {
+      this.slowQueryAlerts.delete(dbId);
+      this.processedSlowQueryCounts.delete(dbId);
+      return;
+    }
+
+    this.slowQueryAlerts.clear();
+    this.processedSlowQueryCounts.clear();
   }
 
   // Helper methods

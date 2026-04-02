@@ -82,11 +82,12 @@ export class SQLiteAdapter extends BaseAdapter {
     options?: IntrospectionOptions
   ): Promise<TableMetadata[]> {
     const result: TableMetadata[] = [];
+    const tableTypes = options?.includeViews ? "'table', 'view'" : "'table'";
 
     let query = `
       SELECT name, type
       FROM sqlite_master
-      WHERE type IN ('table', 'view')
+      WHERE type IN (${tableTypes})
         AND name NOT LIKE 'sqlite_%'
       ORDER BY name
     `;
@@ -98,10 +99,6 @@ export class SQLiteAdapter extends BaseAdapter {
     const tables = this.db!.prepare(query).all() as Array<{ name: string; type: string }>;
 
     for (const table of tables) {
-      if (table.type === 'view' && !options?.includeViews) {
-        continue;
-      }
-
       const columns = await this.getColumns(table.name);
       const indexes = await this.getIndexes(table.name);
       const foreignKeys = await this.getForeignKeys(table.name);

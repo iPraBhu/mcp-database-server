@@ -1,5 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import { redactUrl, interpolateEnv, extractTableNames, isWriteOperation } from '../src/utils.js';
+import {
+  redactUrl,
+  interpolateEnv,
+  extractTableNames,
+  findJoinPaths,
+  isWriteOperation,
+  limitRows,
+} from '../src/utils.js';
 
 describe('Utils', () => {
   describe('redactUrl', () => {
@@ -90,6 +97,67 @@ describe('Utils', () => {
 
     it('should handle whitespace', () => {
       expect(isWriteOperation('  UPDATE users SET name = "test"')).toBe(true);
+    });
+  });
+
+  describe('findJoinPaths', () => {
+    it('should resolve unqualified table names across multiple joins', () => {
+      const paths = findJoinPaths(
+        ['users', 'order_items', 'products'],
+        [
+          {
+            fromSchema: 'public',
+            fromTable: 'orders',
+            fromColumns: ['user_id'],
+            toSchema: 'public',
+            toTable: 'users',
+            toColumns: ['id'],
+            type: 'foreign_key',
+          },
+          {
+            fromSchema: 'public',
+            fromTable: 'order_items',
+            fromColumns: ['order_id'],
+            toSchema: 'public',
+            toTable: 'orders',
+            toColumns: ['id'],
+            type: 'foreign_key',
+          },
+          {
+            fromSchema: 'public',
+            fromTable: 'order_items',
+            fromColumns: ['product_id'],
+            toSchema: 'public',
+            toTable: 'products',
+            toColumns: ['id'],
+            type: 'foreign_key',
+          },
+        ]
+      );
+
+      expect(paths).toHaveLength(1);
+      expect(paths[0].tables).toContain('public.users');
+      expect(paths[0].tables).toContain('public.order_items');
+      expect(paths[0].tables).toContain('public.products');
+      expect(paths[0].joins.length).toBeGreaterThanOrEqual(2);
+      expect(paths[0].joins[0].joinCondition).toContain('=');
+    });
+  });
+
+  describe('limitRows', () => {
+    it('should trim returned rows without mutating SQL', () => {
+      const result = limitRows(
+        {
+          rows: [{ id: 1 }, { id: 2 }, { id: 3 }],
+          columns: ['id'],
+          rowCount: 3,
+          executionTimeMs: 1,
+        },
+        2
+      );
+
+      expect(result.rows).toEqual([{ id: 1 }, { id: 2 }]);
+      expect(result.rowCount).toBe(2);
     });
   });
 });

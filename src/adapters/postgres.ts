@@ -275,7 +275,7 @@ export class PostgresAdapter extends BaseAdapter {
     this.ensureConnected();
 
     try {
-      const explainSql = `EXPLAIN (FORMAT JSON, ANALYZE, BUFFERS) ${sql}`;
+      const explainSql = `EXPLAIN (FORMAT JSON) ${sql}`;
       const result = await this.pool!.query(explainSql, params);
 
       return {

@@ -12,7 +12,7 @@
     "dev": "tsup --watch",
     "lint": "eslint src --ext .ts --max-warnings 100",
     "format": "prettier --write \"src/**/*.ts\"",
-    "test": "vitest",
+    "test": "vitest run",
     "test:coverage": "vitest --coverage",
     "typecheck": "tsc --noEmit",
     "prepublishOnly": "npm run typecheck && npm run lint && npm test -- --run && npm run build"
@@ -25,8 +25,7 @@
     "postgres",
     "mysql",
     "sqlite",
-    "mssql",
-    "oracle"
+    "mssql"
   ],
   "author": "Pratik Bhuite",
   "license": "MIT",
@@ -68,9 +67,6 @@
     "tsup": "^8.3.5",
     "typescript": "^5.7.2",
     "vitest": "^2.1.8"
-  },
-  "optionalDependencies": {
-    "oracledb": "^6.7.0"
   },
   "engines": {
     "node": ">=18.0.0"

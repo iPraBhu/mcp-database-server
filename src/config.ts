@@ -1,8 +1,13 @@
+import dotenv from 'dotenv';
+import { exec } from 'child_process';
 import fs from 'fs/promises';
 import { existsSync } from 'fs';
 import { dirname, resolve, join } from 'path';
+import { promisify } from 'util';
 import { ServerConfig, ServerConfigSchema, ConfigError } from './types.js';
 import { interpolateEnv } from './utils.js';
+
+const execAsync = promisify(exec);
 
 /**
  * Find project root by looking for common project markers
@@ -86,6 +91,8 @@ function findConfigFileFromDir(fileName: string, startDir: string): string | nul
 
 export async function loadConfig(configPath: string): Promise<ServerConfig> {
   try {
+    loadConfigEnvironment(configPath);
+
     const content = await fs.readFile(configPath, 'utf-8');
     const rawConfig = JSON.parse(content);
 
@@ -94,17 +101,30 @@ export async function loadConfig(configPath: string): Promise<ServerConfig> {
 
     // Validate with Zod
     const config = ServerConfigSchema.parse(interpolatedConfig);
+    const resolvedConfig = await resolveDatabaseConnectionSources(config);
 
     // Additional validation
-    validateDatabaseConfigs(config);
+    validateDatabaseConfigs(resolvedConfig);
 
-    return config;
+    return resolvedConfig;
   } catch (error: any) {
     if (error.name === 'ZodError') {
       throw new ConfigError('Configuration validation failed', error.errors);
     }
     throw new ConfigError(`Failed to load config from ${configPath}: ${error.message}`);
   }
+}
+
+function loadConfigEnvironment(configPath: string): void {
+  const envPath = join(dirname(resolve(configPath)), '.env');
+  if (!existsSync(envPath)) {
+    return;
+  }
+
+  dotenv.config({
+    path: envPath,
+    override: false,
+  });
 }
 
 function interpolateConfigValues(obj: any): any {
@@ -127,6 +147,98 @@ function interpolateConfigValues(obj: any): any {
   return obj;
 }
 
+async function resolveDatabaseConnectionSources(config: ServerConfig): Promise<ServerConfig> {
+  const databases = await Promise.all(
+    config.databases.map(async (db) => {
+      const connectionSources = [
+        db.path ? 'path' : null,
+        db.url ? 'url' : null,
+        db.secretRef ? 'secretRef' : null,
+        db.credentialCommand ? 'credentialCommand' : null,
+      ].filter(Boolean);
+
+      if (db.type === 'sqlite') {
+        if (connectionSources.length === 0) {
+          return db;
+        }
+        if (connectionSources.length > 1) {
+          throw new ConfigError(
+            `SQLite database ${db.id} must declare only one of 'path', 'url', 'secretRef', or 'credentialCommand'`
+          );
+        }
+      } else {
+        if (db.path) {
+          throw new ConfigError(`Database ${db.id} cannot use 'path' unless type is 'sqlite'`);
+        }
+        const remoteSources = [db.url ? 'url' : null, db.secretRef ? 'secretRef' : null, db.credentialCommand ? 'credentialCommand' : null].filter(Boolean);
+        if (remoteSources.length === 0) {
+          return db;
+        }
+        if (remoteSources.length > 1) {
+          throw new ConfigError(
+            `Database ${db.id} must declare only one of 'url', 'secretRef', or 'credentialCommand'`
+          );
+        }
+      }
+
+      if (db.secretRef) {
+        const resolvedSecret = process.env[db.secretRef];
+        if (!resolvedSecret) {
+          throw new ConfigError(
+            `Database ${db.id} references missing secret '${db.secretRef}'. Set it in the environment or the config directory .env file.`
+          );
+        }
+
+        return {
+          ...db,
+          url: resolvedSecret,
+        };
+      }
+
+      if (db.credentialCommand) {
+        const resolvedCredential = await runCredentialCommand(db.id, db.credentialCommand);
+        return {
+          ...db,
+          url: resolvedCredential,
+        };
+      }
+
+      return db;
+    })
+  );
+
+  return {
+    ...config,
+    databases,
+  };
+}
+
+async function runCredentialCommand(dbId: string, command: string): Promise<string> {
+  try {
+    const { stdout } = await execAsync(command, {
+      timeout: 10000,
+      maxBuffer: 1024 * 1024,
+    });
+    const value = stdout.trim();
+
+    if (!value) {
+      throw new ConfigError(
+        `credentialCommand for database ${dbId} returned an empty value`
+      );
+    }
+
+    return value;
+  } catch (error: any) {
+    if (error instanceof ConfigError) {
+      throw error;
+    }
+
+    throw new ConfigError(
+      `credentialCommand for database ${dbId} failed: ${error.message}`
+    );
+  }
+}
+
 function validateDatabaseConfigs(config: ServerConfig): void {
   const ids = new Set<string>();
 
@@ -140,11 +252,15 @@ function validateDatabaseConfigs(config: ServerConfig): void {
     // Validate database-specific requirements
     if (db.type === 'sqlite') {
       if (!db.path && !db.url) {
-        throw new ConfigError(`SQLite database ${db.id} requires 'path' or 'url'`);
+        throw new ConfigError(
+          `SQLite database ${db.id} requires one of 'path', 'url', 'secretRef', or 'credentialCommand'`
+        );
       }
     } else {
       if (!db.url) {
-        throw new ConfigError(`Database ${db.id} requires 'url'`);
+        throw new ConfigError(
+          `Database ${db.id} requires one of 'url', 'secretRef', or 'credentialCommand'`
+        );
       }
     }
   }

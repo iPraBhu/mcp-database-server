@@ -2,7 +2,7 @@ import { DatabaseAdapter, DatabaseConfig, IntrospectionOptions, QueryResult } fr
 import { createAdapter } from './adapters/index.js';
 import { SchemaCache, CacheEntry } from './cache.js';
 import { QueryTracker } from './query-tracker.js';
-import { isWriteOperation, findJoinPaths } from './utils.js';
+import { isWriteOperation, findJoinPaths, getSqlOperation, isReadOnlyQuery } from './utils.js';
 import { getLogger } from './logger.js';
 
 export interface DatabaseManagerOptions {
@@ -88,8 +88,12 @@ export class DatabaseManager {
   }
 
   async testConnection(dbId: string): Promise<boolean> {
-    const adapter = this.getAdapter(dbId);
-    return adapter.testConnection();
+    try {
+      await this.ensureConnected(dbId);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   async getVersion(dbId: string): Promise<string> {
@@ -103,6 +107,19 @@ export class DatabaseManager {
     forceRefresh: boolean = false,
     options?: IntrospectionOptions
   ): Promise<CacheEntry> {
+    const config = this.getConfig(dbId);
+    const introspectionOptions: IntrospectionOptions | undefined =
+      config?.introspection || options
+        ? {
+            includeViews: options?.includeViews ?? config?.introspection?.includeViews ?? true,
+            includeRoutines:
+              options?.includeRoutines ?? config?.introspection?.includeRoutines ?? false,
+            maxTables: options?.maxTables ?? config?.introspection?.maxTables,
+            excludeSchemas: options?.excludeSchemas ?? config?.introspection?.excludeSchemas,
+            includeSchemas: options?.includeSchemas ?? config?.introspection?.includeSchemas,
+          }
+        : undefined;
+
     // Check cache first
     if (!forceRefresh) {
       const cached = await this.cache.get(dbId);
@@ -128,11 +145,10 @@ export class DatabaseManager {
 
       await this.ensureConnected(dbId);
       const adapter = this.getAdapter(dbId);
-      const schema = await adapter.introspect(options);
+      const schema = await adapter.introspect(introspectionOptions);
 
       // Cache the result
-      const config = this.getConfig(dbId);
-      await this.cache.set(dbId, schema, config?.introspection?.maxTables);
+      await this.cache.set(dbId, schema);
 
       const entry = await this.cache.get(dbId);
       return entry!;
@@ -152,34 +168,13 @@ export class DatabaseManager {
     params: any[] = [],
     timeoutMs?: number
   ): Promise<QueryResult> {
-    const config = this.getConfig(dbId);
-    
-    // Check if write operation
-    if (isWriteOperation(sql)) {
-      if (!this.options.allowWrite && !config?.readOnly === false) {
-        throw new Error('Write operations are not allowed. Set allowWrite in config.');
-      }
-
-      // Check for dangerous operations (DELETE, TRUNCATE, DROP)
-      if (this.options.disableDangerousOperations) {
-        const operation = sql.trim().split(/\s+/)[0].toUpperCase();
-        const dangerousOps = ['DELETE', 'TRUNCATE', 'DROP'];
-        if (dangerousOps.includes(operation)) {
-          throw new Error(`Dangerous operation ${operation} is disabled. Set disableDangerousOperations: false in security config to allow.`);
-        }
-      }
-
-      // Check allowed operations
-      if (this.options.allowedWriteOperations && this.options.allowedWriteOperations.length > 0) {
-        const operation = sql.trim().split(/\s+/)[0].toUpperCase();
-        if (!this.options.allowedWriteOperations.includes(operation)) {
-          throw new Error(`Write operation ${operation} is not allowed.`);
-        }
-      }
-    }
+    this.validateQueryAccess(dbId, sql, 'execute');
+    const writeOperation = isWriteOperation(sql);
 
     // Ensure schema is cached (for relationship annotation)
-    await this.introspectSchema(dbId, false);
+    if (!writeOperation) {
+      await this.introspectSchema(dbId, false);
+    }
 
     await this.ensureConnected(dbId);
     const adapter = this.getAdapter(dbId);
@@ -189,7 +184,7 @@ export class DatabaseManager {
       
       // Get EXPLAIN plan for performance analysis (if not a write operation)
       let explainPlan;
-      if (!isWriteOperation(sql)) {
+      if (!writeOperation) {
         try {
           explainPlan = await adapter.explain(sql, params);
         } catch (_explainError) {
@@ -201,6 +196,10 @@ export class DatabaseManager {
       // Track query with performance data
       this.queryTracker.track(dbId, sql, result.executionTimeMs, result.rowCount, undefined, explainPlan);
 
+      if (writeOperation) {
+        await this.cache.clear(dbId);
+      }
+
       return result;
     } catch (error: any) {
       // Track error
@@ -210,6 +209,7 @@ export class DatabaseManager {
   }
 
   async explainQuery(dbId: string, sql: string, params: any[] = []): Promise<any> {
+    this.validateQueryAccess(dbId, sql, 'analyze');
     await this.ensureConnected(dbId);
     const adapter = this.getAdapter(dbId);
     return adapter.explain(sql, params);
@@ -242,8 +242,8 @@ export class DatabaseManager {
   }
 
   async getIndexRecommendations(dbId: string): Promise<any[]> {
-    const schema = await this.getSchema(dbId);
-    return this.queryTracker.getIndexRecommendations(dbId, schema);
+    const cacheEntry = await this.getSchema(dbId);
+    return this.queryTracker.getIndexRecommendations(dbId, cacheEntry.schema);
   }
 
   getSlowQueryAlerts(dbId: string): any[] {
@@ -251,11 +251,12 @@ export class DatabaseManager {
   }
 
   async suggestQueryRewrite(dbId: string, sql: string): Promise<any> {
-    const schema = await this.getSchema(dbId);
-    return this.queryTracker.suggestQueryRewrite(sql, schema);
+    const cacheEntry = await this.getSchema(dbId);
+    return this.queryTracker.suggestQueryRewrite(sql, cacheEntry.schema);
   }
 
   async profileQueryPerformance(dbId: string, sql: string, params: any[] = []): Promise<any> {
+    this.validateQueryAccess(dbId, sql, 'analyze');
     await this.ensureConnected(dbId);
     const adapter = this.getAdapter(dbId);
     
@@ -268,5 +269,44 @@ export class DatabaseManager {
     const explainResult = await adapter.explain(sql, params);
     
     return this.queryTracker.profileQueryPerformance(dbId, sql, explainResult, executionTimeMs, result.rowCount);
+  }
+
+  private validateQueryAccess(
+    dbId: string,
+    sql: string,
+    mode: 'execute' | 'analyze'
+  ): void {
+    const config = this.getConfig(dbId);
+    const operation = getSqlOperation(sql);
+    const dangerousOps = ['DELETE', 'TRUNCATE', 'DROP'];
+
+    if (mode === 'analyze' && !isReadOnlyQuery(sql)) {
+      throw new Error('Only read-only SELECT queries can be explained or profiled.');
+    }
+
+    if (!isWriteOperation(sql)) {
+      return;
+    }
+
+    if (!this.options.allowWrite) {
+      throw new Error('Write operations are not allowed. Set allowWrite in config.');
+    }
+
+    if (config?.readOnly !== false) {
+      throw new Error(`Database ${dbId} is read-only. Set readOnly: false for this database to allow writes.`);
+    }
+
+    if (this.options.disableDangerousOperations && dangerousOps.includes(operation)) {
+      throw new Error(
+        `Dangerous operation ${operation} is disabled. Set disableDangerousOperations: false in security config to allow.`
+      );
+    }
+
+    if (this.options.allowedWriteOperations && this.options.allowedWriteOperations.length > 0) {
+      const allowedOperations = this.options.allowedWriteOperations.map((op) => op.toUpperCase());
+      if (!allowedOperations.includes(operation)) {
+        throw new Error(`Write operation ${operation} is not allowed.`);
+      }
+    }
   }
 }

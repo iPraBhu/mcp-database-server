@@ -216,15 +216,15 @@ export class MySQLAdapter extends BaseAdapter {
     this.ensureConnected();
 
     const startTime = Date.now();
+    let connection: mysql.PoolConnection | undefined;
     try {
-      const connection = await this.pool!.getConnection();
-      
-      if (timeoutMs) {
-        await connection.query(`SET SESSION max_execution_time=${timeoutMs}`);
-      }
+      connection = await this.pool!.getConnection();
 
-      const [rows, fields] = await connection.query(sql, params);
-      connection.release();
+      const [rows, fields] = await connection.query({
+        sql,
+        values: params,
+        timeout: timeoutMs,
+      });
 
       const executionTimeMs = Date.now() - startTime;
 
@@ -237,6 +237,9 @@ export class MySQLAdapter extends BaseAdapter {
       };
     } catch (error) {
       this.handleError(error, 'query');
+      throw error;
+    } finally {
+      connection?.release();
     }
   }
 

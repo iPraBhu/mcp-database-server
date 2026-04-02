@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 import { URL } from 'url';
-import { Relationship, DatabaseSchema } from './types.js';
+import { Relationship, DatabaseSchema, JoinPath } from './types.js';
 
 /**
  * Redact secrets from URLs and connection strings
@@ -185,6 +185,21 @@ export function isWriteOperation(sql: string): boolean {
   return false;
 }
 
+export function getSqlOperation(sql: string): string {
+  const normalizedSql = sql
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .replace(/--.*$/gm, ' ')
+    .trim();
+
+  const match = normalizedSql.match(/^([a-zA-Z]+)/);
+  return match ? match[1].toUpperCase() : '';
+}
+
+export function isReadOnlyQuery(sql: string): boolean {
+  const operation = getSqlOperation(sql);
+  return operation === 'SELECT' || operation === 'WITH';
+}
+
 /**
  * Find join paths between tables using relationship graph
  */
@@ -192,24 +207,27 @@ export function findJoinPaths(
   tables: string[],
   relationships: Relationship[],
   maxDepth = 3
-): any[] {
+): JoinPath[] {
   if (tables.length < 2) {
     return [];
   }
-  
-  const paths: any[] = [];
-  
+
   // Build adjacency list
   const graph = new Map<string, Relationship[]>();
+  const nodeKeys = new Set<string>();
+
   for (const rel of relationships) {
     const fromKey = `${rel.fromSchema}.${rel.fromTable}`.toLowerCase();
     const toKey = `${rel.toSchema}.${rel.toTable}`.toLowerCase();
-    
+
+    nodeKeys.add(fromKey);
+    nodeKeys.add(toKey);
+
     if (!graph.has(fromKey)) {
       graph.set(fromKey, []);
     }
     graph.get(fromKey)!.push(rel);
-    
+
     // Reverse direction
     const reverseRel: Relationship = {
       ...rel,
@@ -226,39 +244,113 @@ export function findJoinPaths(
     }
     graph.get(toKey)!.push(reverseRel);
   }
-  
-  // Simple BFS to find shortest path between first two tables
-  const start = tables[0].toLowerCase();
-  const end = tables[1].toLowerCase();
-  
-  const queue: Array<{ current: string; path: Relationship[] }> = [{ current: start, path: [] }];
-  const visited = new Set<string>([start]);
-  
-  while (queue.length > 0) {
-    const { current, path } = queue.shift()!;
-    
-    if (path.length >= maxDepth) {
-      continue;
+
+  const resolveCandidates = (table: string): string[] => {
+    const normalized = table.toLowerCase();
+    if (nodeKeys.has(normalized)) {
+      return [normalized];
     }
-    
-    const neighbors = graph.get(current) || [];
-    for (const rel of neighbors) {
-      const next = `${rel.toSchema}.${rel.toTable}`.toLowerCase();
-      
-      if (next === end) {
-        paths.push({
-          tables: [start, ...path.map((r) => `${r.toSchema}.${r.toTable}`), end],
-          joins: [...path, rel],
-        });
+
+    return Array.from(nodeKeys).filter((key) => key.endsWith(`.${normalized}`));
+  };
+
+  const bfs = (starts: string[], ends: string[]): { target: string; path: Relationship[] } | null => {
+    const endSet = new Set(ends);
+    const queue: Array<{ current: string; path: Relationship[] }> = starts.map((current) => ({
+      current,
+      path: [],
+    }));
+    const visited = new Set<string>(starts);
+
+    while (queue.length > 0) {
+      const { current, path } = queue.shift()!;
+
+      if (path.length >= maxDepth) {
         continue;
       }
-      
-      if (!visited.has(next)) {
-        visited.add(next);
-        queue.push({ current: next, path: [...path, rel] });
+
+      for (const rel of graph.get(current) || []) {
+        const next = `${rel.toSchema}.${rel.toTable}`.toLowerCase();
+        const nextPath = [...path, rel];
+
+        if (endSet.has(next)) {
+          return { target: next, path: nextPath };
+        }
+
+        if (!visited.has(next)) {
+          visited.add(next);
+          queue.push({ current: next, path: nextPath });
+        }
       }
     }
+
+    return null;
+  };
+
+  let currentCandidates = resolveCandidates(tables[0]);
+  if (currentCandidates.length === 0) {
+    return [];
   }
-  
-  return paths;
+
+  const joinedTables = [currentCandidates[0]];
+  const joins: JoinPath['joins'] = [];
+
+  for (const table of tables.slice(1)) {
+    const nextCandidates = resolveCandidates(table);
+    if (nextCandidates.length === 0) {
+      return [];
+    }
+
+    const segment = bfs(currentCandidates, nextCandidates);
+    if (!segment) {
+      return [];
+    }
+
+    for (const rel of segment.path) {
+      const fromKey = `${rel.fromSchema}.${rel.fromTable}`.toLowerCase();
+      const toKey = `${rel.toSchema}.${rel.toTable}`.toLowerCase();
+
+      if (joinedTables[joinedTables.length - 1] !== fromKey) {
+        joinedTables.push(fromKey);
+      }
+      joinedTables.push(toKey);
+
+      joins.push({
+        fromTable: rel.fromTable,
+        toTable: rel.toTable,
+        relationship: rel,
+        joinCondition: rel.fromColumns
+          .map((column, index) => {
+            const targetColumn = rel.toColumns[index] || rel.toColumns[0];
+            return `${rel.fromSchema}.${rel.fromTable}.${column} = ${rel.toSchema}.${rel.toTable}.${targetColumn}`;
+          })
+          .join(' AND '),
+      });
+    }
+
+    currentCandidates = [segment.target];
+  }
+
+  return [
+    {
+      tables: joinedTables,
+      joins,
+    },
+  ];
+}
+
+export function limitRows<T extends { rows: any[]; rowCount: number }>(
+  result: T,
+  limit?: number
+): T {
+  if (limit === undefined || limit < 0) {
+    return result;
+  }
+
+  const rows = result.rows.slice(0, limit);
+  return {
+    ...result,
+    rows,
+    rowCount: rows.length,
+  };
 }

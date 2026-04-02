@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { findConfigFile, findProjectRoot } from './config.js';
+import { findConfigFile, findProjectRoot, loadConfig } from './config.js';
 import { mkdirSync, writeFileSync, rmSync, existsSync } from 'fs';
 import { join } from 'path';
 
@@ -138,5 +138,90 @@ describe('findConfigFile', () => {
     } finally {
       rmSync(configPath);
     }
+  });
+});
+
+describe('loadConfig', () => {
+  const testDir = join(process.cwd(), 'test-config-loading');
+  const configPath = join(testDir, '.mcp-database-server.config');
+  const envPath = join(testDir, '.env');
+
+  beforeEach(() => {
+    if (existsSync(testDir)) {
+      rmSync(testDir, { recursive: true, force: true });
+    }
+    mkdirSync(testDir, { recursive: true });
+    delete process.env.TEST_DB_SECRET;
+  });
+
+  afterEach(() => {
+    delete process.env.TEST_DB_SECRET;
+    if (existsSync(testDir)) {
+      rmSync(testDir, { recursive: true, force: true });
+    }
+  });
+
+  it('should resolve secretRef from a .env file next to the config', async () => {
+    writeFileSync(
+      envPath,
+      'TEST_DB_SECRET=postgresql://user:pass@localhost:5432/app\n'
+    );
+    writeFileSync(
+      configPath,
+      JSON.stringify({
+        databases: [
+          {
+            id: 'main',
+            type: 'postgres',
+            secretRef: 'TEST_DB_SECRET',
+          },
+        ],
+      })
+    );
+
+    const config = await loadConfig(configPath);
+
+    expect(config.databases[0].url).toBe('postgresql://user:pass@localhost:5432/app');
+    expect(config.databases[0].secretRef).toBe('TEST_DB_SECRET');
+  });
+
+  it('should resolve credentialCommand output into the database url', async () => {
+    writeFileSync(
+      configPath,
+      JSON.stringify({
+        databases: [
+          {
+            id: 'analytics',
+            type: 'mysql',
+            credentialCommand:
+              'node -e "process.stdout.write(\'mysql://user:pass@localhost:3306/analytics\')"',
+          },
+        ],
+      })
+    );
+
+    const config = await loadConfig(configPath);
+
+    expect(config.databases[0].url).toBe('mysql://user:pass@localhost:3306/analytics');
+  });
+
+  it('should reject multiple connection sources for the same database', async () => {
+    writeFileSync(
+      configPath,
+      JSON.stringify({
+        databases: [
+          {
+            id: 'main',
+            type: 'postgres',
+            url: 'postgresql://user:pass@localhost:5432/app',
+            secretRef: 'TEST_DB_SECRET',
+          },
+        ],
+      })
+    );
+
+    await expect(loadConfig(configPath)).rejects.toThrow(
+      "Database main must declare only one of 'url', 'secretRef', or 'credentialCommand'"
+    );
   });
 });

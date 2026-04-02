@@ -137,6 +137,7 @@ export class QueryTracker {
   }
 
   clear(dbId?: string): void {
+    this.optimizer.clear(dbId);
     if (dbId) {
       this.history.delete(dbId);
     } else {

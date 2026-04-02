@@ -10,7 +10,7 @@ import {
 import { DatabaseManager } from './database-manager.js';
 import { ServerConfig } from './types.js';
 import { getLogger } from './logger.js';
-import { redactUrl } from './utils.js';
+import { extractTableNames, limitRows, redactUrl } from './utils.js';
 
 export class MCPServer {
   private server: Server;
@@ -18,12 +18,13 @@ export class MCPServer {
 
   constructor(
     private _dbManager: DatabaseManager,
-    private _config: ServerConfig
+    private _config: ServerConfig,
+    private _version: string
   ) {
     this.server = new Server(
       {
         name: 'mcp-database-server',
-        version: '1.0.0',
+        version: this._version,
       },
       {
         capabilities: {
@@ -50,7 +51,7 @@ export class MCPServer {
         },
         serverInfo: {
           name: 'mcp-database-server',
-          version: '1.0.0',
+          version: this._version,
         },
       };
     });
@@ -531,18 +532,15 @@ export class MCPServer {
     limit?: number;
     timeoutMs?: number;
   }) {
-    let sql = args.sql;
-
-    // Apply row limit if specified
-    if (args.limit && !sql.toUpperCase().includes('LIMIT')) {
-      sql += ` LIMIT ${args.limit}`;
-    }
-
-    const result = await this._dbManager.runQuery(args.dbId, sql, args.params, args.timeoutMs);
+    const result = limitRows(
+      await this._dbManager.runQuery(args.dbId, args.sql, args.params, args.timeoutMs),
+      args.limit
+    );
 
     // Get relevant relationships for the query
     const cacheEntry = await this._dbManager.getSchema(args.dbId);
     const queryStats = this._dbManager.getQueryStats(args.dbId);
+    const referencedTables = new Set(extractTableNames(args.sql));
 
     return {
       content: [
@@ -553,11 +551,10 @@ export class MCPServer {
               ...result,
               metadata: {
                 relationships: cacheEntry.relationships.filter((r) =>
-                  result.columns.some(
-                    (col) =>
-                      col.includes(r.fromTable) ||
-                      col.includes(r.toTable)
-                  )
+                  referencedTables.has(`${r.fromSchema}.${r.fromTable}`.toLowerCase()) ||
+                  referencedTables.has(`${r.toSchema}.${r.toTable}`.toLowerCase()) ||
+                  referencedTables.has(r.fromTable.toLowerCase()) ||
+                  referencedTables.has(r.toTable.toLowerCase())
                 ),
                 queryStats,
               },

@@ -119,7 +119,7 @@ Examples:
     await dbManager.init();
 
     // Create and start MCP server
-    const mcpServer = new MCPServer(dbManager, config);
+    const mcpServer = new MCPServer(dbManager, config, version);
     await mcpServer.start();
 
     // Graceful shutdown

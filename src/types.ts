@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 // Database types
-export type DatabaseType = 'postgres' | 'mysql' | 'mssql' | 'sqlite' | 'oracle';
+export type DatabaseType = 'postgres' | 'mysql' | 'mssql' | 'sqlite';
 
 // Connection pool settings
 export const ConnectionPoolSchema = z.object({
@@ -27,9 +27,11 @@ export type IntrospectionOptions = z.infer<typeof IntrospectionOptionsSchema>;
 // Database configuration
 export const DatabaseConfigSchema = z.object({
   id: z.string().min(1),
-  type: z.enum(['postgres', 'mysql', 'mssql', 'sqlite', 'oracle']),
+  type: z.enum(['postgres', 'mysql', 'mssql', 'sqlite']),
   url: z.string().optional(),
   path: z.string().optional(),
+  secretRef: z.string().min(1).optional(),
+  credentialCommand: z.string().min(1).optional(),
   readOnly: z.boolean().optional().default(true),
   pool: ConnectionPoolSchema.optional(),
   introspection: IntrospectionOptionsSchema.optional(),

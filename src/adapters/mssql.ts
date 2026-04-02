@@ -1,4 +1,4 @@
-import { Connection, Request } from 'tedious';
+import { Connection, Request, TYPES } from 'tedious';
 import { BaseAdapter } from './base.js';
 import {
   DatabaseSchema,
@@ -90,15 +90,26 @@ export class MSSQLAdapter extends BaseAdapter {
     }
   }
 
-  private executeQuery(sql: string, _params: any[] = []): Promise<any[]> {
+  private executeQuery(sql: string, params: any[] = [], timeoutMs?: number): Promise<any[]> {
     return new Promise((resolve, reject) => {
       const rows: any[] = [];
-      const request = new Request(sql, (err) => {
+      let parameterIndex = 0;
+      const parameterizedSql = sql.replace(/\?/g, () => `@p${++parameterIndex}`);
+      const request = new Request(parameterizedSql, (err) => {
         if (err) {
           reject(err);
         } else {
           resolve(rows);
         }
+      });
+
+      if (timeoutMs) {
+        request.setTimeout(timeoutMs);
+      }
+
+      params.forEach((param, index) => {
+        const { type, value } = this.mapParameter(param);
+        request.addParameter(`p${index + 1}`, type, value);
       });
 
       request.on('row', (columns) => {
@@ -111,6 +122,29 @@ export class MSSQLAdapter extends BaseAdapter {
 
       this.connection!.execSql(request);
     });
+  }
+
+  private mapParameter(value: any): { type: any; value: any } {
+    if (value === null || value === undefined) {
+      return { type: TYPES.NVarChar, value: null };
+    }
+    if (typeof value === 'boolean') {
+      return { type: TYPES.Bit, value };
+    }
+    if (typeof value === 'number' && Number.isInteger(value)) {
+      return { type: TYPES.Int, value };
+    }
+    if (typeof value === 'number') {
+      return { type: TYPES.Float, value };
+    }
+    if (value instanceof Date) {
+      return { type: TYPES.DateTime, value };
+    }
+    if (Buffer.isBuffer(value)) {
+      return { type: TYPES.VarBinary, value };
+    }
+
+    return { type: TYPES.NVarChar, value: String(value) };
   }
 
   async introspect(options?: IntrospectionOptions): Promise<DatabaseSchema> {
@@ -305,7 +339,7 @@ export class MSSQLAdapter extends BaseAdapter {
 
     const startTime = Date.now();
     try {
-      const rows = await this.executeQuery(sql, params);
+      const rows = await this.executeQuery(sql, params, _timeoutMs);
       const executionTimeMs = Date.now() - startTime;
       const columns = rows.length > 0 ? Object.keys(rows[0]) : [];
 
