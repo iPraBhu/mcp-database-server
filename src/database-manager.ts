@@ -96,9 +96,47 @@ export class DatabaseManager {
 
   private async ensureConnected(dbId: string): Promise<void> {
     const adapter = this.getAdapter(dbId);
-    const connected = await adapter.testConnection();
-    if (!connected) {
+    if (!adapter.isConnected()) {
       await this.connect(dbId);
+    }
+  }
+
+  private async reconnect(dbId: string): Promise<void> {
+    const adapter = this.getAdapter(dbId);
+    try {
+      await adapter.disconnect();
+    } catch (error) {
+      this.logger.warn({ dbId, error }, 'Disconnect during reconnect failed');
+    }
+
+    await adapter.connect();
+  }
+
+  private isRetryableConnectionError(error: any): boolean {
+    const code = error?._code || error?.code;
+    return [
+      'NOT_CONNECTED',
+      'PROTOCOL_CONNECTION_LOST',
+      'PROTOCOL_ENQUEUE_AFTER_FATAL_ERROR',
+      'PROTOCOL_ENQUEUE_AFTER_QUIT',
+      'ECONNRESET',
+      'ECONNREFUSED',
+      'EPIPE',
+      'ETIMEDOUT',
+    ].includes(code);
+  }
+
+  private async executeReadWithRecovery<T>(dbId: string, operation: () => Promise<T>): Promise<T> {
+    try {
+      return await operation();
+    } catch (error) {
+      if (!this.isRetryableConnectionError(error)) {
+        throw error;
+      }
+
+      this.logger.warn({ dbId, error }, 'Retrying read operation after reconnect');
+      await this.reconnect(dbId);
+      return await operation();
     }
   }
 
@@ -181,7 +219,9 @@ export class DatabaseManager {
     dbId: string,
     sql: string,
     params: any[] = [],
-    timeoutMs?: number
+    timeoutMs?: number,
+    includeSchemaContext: boolean = true,
+    trackQuery: boolean = true
   ): Promise<QueryResult> {
     this.validateQueryAccess(dbId, sql, 'execute');
     const writeOperation = isWriteOperation(sql);
@@ -189,7 +229,7 @@ export class DatabaseManager {
     const referencedTables = readOnlyQuery ? extractTableNames(sql) : [];
 
     // Ensure schema is cached (for relationship annotation)
-    if (readOnlyQuery && referencedTables.length > 0) {
+    if (includeSchemaContext && readOnlyQuery && referencedTables.length > 0) {
       await this.introspectSchema(dbId, false);
     }
 
@@ -197,13 +237,17 @@ export class DatabaseManager {
     const adapter = this.getAdapter(dbId);
 
     try {
-      const result = await adapter.query(sql, params, timeoutMs);
+      const result = readOnlyQuery
+        ? await this.executeReadWithRecovery(dbId, async () => adapter.query(sql, params, timeoutMs))
+        : await adapter.query(sql, params, timeoutMs);
 
       // Collect EXPLAIN only for slow read-only queries to avoid doubling fast-query latency.
       let explainPlan;
-      if (readOnlyQuery && result.executionTimeMs >= AUTO_EXPLAIN_THRESHOLD_MS) {
+      if (trackQuery && readOnlyQuery && result.executionTimeMs >= AUTO_EXPLAIN_THRESHOLD_MS) {
         try {
-          explainPlan = await adapter.explain(sql, params);
+          explainPlan = await this.executeReadWithRecovery(dbId, async () =>
+            adapter.explain(sql, params)
+          );
         } catch (_explainError) {
           // EXPLAIN might not be supported or might fail, continue without it
           this.logger.debug({ dbId, sql }, 'EXPLAIN failed, continuing without performance analysis');
@@ -211,7 +255,16 @@ export class DatabaseManager {
       }
       
       // Track query with performance data
-      this.queryTracker.track(dbId, sql, result.executionTimeMs, result.rowCount, undefined, explainPlan);
+      if (trackQuery) {
+        this.queryTracker.track(
+          dbId,
+          sql,
+          result.executionTimeMs,
+          result.rowCount,
+          undefined,
+          explainPlan
+        );
+      }
 
       if (writeOperation) {
         await this.cache.clear(dbId);
@@ -220,7 +273,9 @@ export class DatabaseManager {
       return result;
     } catch (error: any) {
       // Track error
-      this.queryTracker.track(dbId, sql, 0, 0, error.message);
+      if (trackQuery) {
+        this.queryTracker.track(dbId, sql, 0, 0, error.message);
+      }
       throw error;
     }
   }
@@ -229,7 +284,7 @@ export class DatabaseManager {
     this.validateQueryAccess(dbId, sql, 'analyze');
     await this.ensureConnected(dbId);
     const adapter = this.getAdapter(dbId);
-    return adapter.explain(sql, params);
+    return this.executeReadWithRecovery(dbId, async () => adapter.explain(sql, params));
   }
 
   async runReadQueryPage(
@@ -241,7 +296,7 @@ export class DatabaseManager {
     this.validateQueryAccess(dbId, sql, 'analyze');
     await this.ensureConnected(dbId);
     const adapter = this.getAdapter(dbId);
-    return adapter.query(sql, params, timeoutMs);
+    return this.executeReadWithRecovery(dbId, async () => adapter.query(sql, params, timeoutMs));
   }
 
   async streamReadQuery(
@@ -259,7 +314,9 @@ export class DatabaseManager {
       return null;
     }
 
-    return adapter.streamQuery(sql, params, timeoutMs, handlers);
+    return this.executeReadWithRecovery(dbId, async () =>
+      adapter.streamQuery!(sql, params, timeoutMs, handlers)
+    );
   }
 
   async suggestJoins(dbId: string, tables: string[]): Promise<any[]> {
@@ -309,11 +366,13 @@ export class DatabaseManager {
     
     // Execute query to get timing
     const startTime = Date.now();
-    const result = await adapter.query(sql, params);
+    const result = await this.executeReadWithRecovery(dbId, async () => adapter.query(sql, params));
     const executionTimeMs = Date.now() - startTime;
     
     // Get EXPLAIN plan
-    const explainResult = await adapter.explain(sql, params);
+    const explainResult = await this.executeReadWithRecovery(dbId, async () =>
+      adapter.explain(sql, params)
+    );
     
     return this.queryTracker.profileQueryPerformance(dbId, sql, explainResult, executionTimeMs, result.rowCount);
   }

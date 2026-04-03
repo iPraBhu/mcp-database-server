@@ -265,6 +265,7 @@ export interface JoinPath {
 export interface DatabaseAdapter {
   connect(): Promise<void>;
   disconnect(): Promise<void>;
+  isConnected(): boolean;
   introspect(options?: IntrospectionOptions): Promise<DatabaseSchema>;
   query(sql: string, params?: any[], timeoutMs?: number): Promise<QueryResult>;
   streamQuery?(

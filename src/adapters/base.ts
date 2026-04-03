@@ -23,6 +23,10 @@ export abstract class BaseAdapter implements DatabaseAdapter {
   abstract testConnection(): Promise<boolean>;
   abstract getVersion(): Promise<string>;
 
+  isConnected(): boolean {
+    return this.connected;
+  }
+
   protected ensureConnected(): void {
     if (!this.connected) {
       throw new DatabaseError(

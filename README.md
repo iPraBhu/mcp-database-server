@@ -675,6 +675,8 @@ Executes SQL queries with automatic schema caching, relationship annotation, and
 | `limit` | number | No | Maximum number of rows to return |
 | `offset` | number | No | Row offset for paginated reads. Requires `limit`. |
 | `maxBytes` | number | No | Approximate max serialized bytes for returned rows. |
+| `includeMetadata` | boolean | No | Include relationship and query statistics metadata in the response. Default: `true`. |
+| `trackQuery` | boolean | No | Track this query in history and performance analytics. Default: `true`. |
 | `timeoutMs` | number | No | Query timeout in milliseconds |
 
 **Example Request:**
@@ -686,6 +688,8 @@ Executes SQL queries with automatic schema caching, relationship annotation, and
   "limit": 10,
   "offset": 0,
   "maxBytes": 32768,
+  "includeMetadata": false,
+  "trackQuery": false,
   "timeoutMs": 5000
 }
 ```
@@ -722,6 +726,8 @@ Executes SQL queries with automatic schema caching, relationship annotation, and
   }
 }
 ```
+
+For the fastest MariaDB/MySQL read path, set `"includeMetadata": false` and `"trackQuery": false` when you only need result rows and do not need relationship annotations, query history, or performance analytics for that request.
 
 **Security Controls:**
 - ✅ Write operations blocked by default (`allowWrite: false`)

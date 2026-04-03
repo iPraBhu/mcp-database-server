@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { DatabaseManager } from './database-manager.js';
-import type { DatabaseConfig } from './types.js';
+import { DatabaseError, type DatabaseConfig } from './types.js';
 
 describe('DatabaseManager Security', () => {
   const mockConfig: DatabaseConfig[] = [
@@ -227,6 +227,90 @@ describe('DatabaseManager Security', () => {
       await manager.runQuery('test-db', 'SELECT * FROM users');
 
       expect(explainSpy).toHaveBeenCalledTimes(1);
+      await manager.shutdown();
+    });
+
+    it('should retry read queries once after a retryable connection error', async () => {
+      const manager = new DatabaseManager(mockConfig, {
+        cacheDir: '.test-cache',
+        cacheTtlMinutes: 10,
+        allowWrite: true,
+        disableDangerousOperations: false,
+      });
+
+      await manager.init();
+
+      const mockAdapter = {
+        connect: vi.fn(async () => undefined),
+        disconnect: vi.fn(async () => undefined),
+        isConnected: vi.fn(() => true),
+        introspect: vi.fn(),
+        query: vi
+          .fn()
+          .mockRejectedValueOnce(new DatabaseError('lost', 'PROTOCOL_CONNECTION_LOST', 'test-db'))
+          .mockResolvedValueOnce({
+            rows: [{ id: 1 }],
+            columns: ['id'],
+            rowCount: 1,
+            executionTimeMs: 5,
+          }),
+        explain: vi.fn(),
+        testConnection: vi.fn(async () => true),
+        getVersion: vi.fn(async () => 'test'),
+      };
+
+      (manager as any).adapters.set('test-db', mockAdapter);
+
+      const result = await manager.runQuery('test-db', 'SELECT * FROM users');
+
+      expect(result.rows).toEqual([{ id: 1 }]);
+      expect(mockAdapter.query).toHaveBeenCalledTimes(2);
+      expect(mockAdapter.disconnect).toHaveBeenCalledTimes(1);
+      expect(mockAdapter.connect).toHaveBeenCalledTimes(1);
+
+      await manager.shutdown();
+    });
+
+    it('should skip schema introspection when schema context is disabled', async () => {
+      const manager = new DatabaseManager(mockConfig, {
+        cacheDir: '.test-cache',
+        cacheTtlMinutes: 10,
+        allowWrite: true,
+        disableDangerousOperations: false,
+      });
+
+      await manager.init();
+      await manager.runQuery('test-db', 'CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)');
+      await manager.runQuery('test-db', "INSERT INTO users VALUES (1, 'test')");
+
+      const introspectSpy = vi.spyOn(manager as any, 'introspectSchema');
+
+      await manager.runQuery('test-db', 'SELECT * FROM users', [], undefined, false);
+
+      expect(introspectSpy).not.toHaveBeenCalled();
+      await manager.shutdown();
+    });
+
+    it('should skip tracking and auto-explain when tracking is disabled', async () => {
+      const manager = new DatabaseManager(mockConfig, {
+        cacheDir: '.test-cache',
+        cacheTtlMinutes: 10,
+        allowWrite: true,
+        disableDangerousOperations: false,
+      });
+
+      await manager.init();
+      await manager.runQuery('test-db', 'CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)');
+      await manager.runQuery('test-db', "INSERT INTO users VALUES (1, 'test')");
+
+      const adapter = (manager as any).adapters.get('test-db');
+      const explainSpy = vi.spyOn(adapter, 'explain');
+      const trackSpy = vi.spyOn((manager as any).queryTracker, 'track');
+
+      await manager.runQuery('test-db', 'SELECT * FROM users', [], undefined, false, false);
+
+      expect(explainSpy).not.toHaveBeenCalled();
+      expect(trackSpy).not.toHaveBeenCalled();
       await manager.shutdown();
     });
   });

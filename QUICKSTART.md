@@ -163,6 +163,8 @@ Use run_query with:
 - limit: 10
 - offset: 0
 - maxBytes: 32768
+- includeMetadata: false
+- trackQuery: false
 ```
 
 ### 4. Get Join Suggestions

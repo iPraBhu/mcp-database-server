@@ -167,6 +167,16 @@ export class MCPServer {
                 type: 'number',
                 description: 'Approximate max serialized bytes for returned rows.',
               },
+              includeMetadata: {
+                type: 'boolean',
+                description: 'Include relationship and query statistics metadata in the response.',
+                default: true,
+              },
+              trackQuery: {
+                type: 'boolean',
+                description: 'Track this query in history and performance analytics. Default: true.',
+                default: true,
+              },
               timeoutMs: {
                 type: 'number',
                 description: 'Query timeout in milliseconds',
@@ -595,6 +605,8 @@ export class MCPServer {
     limit?: number;
     offset?: number;
     maxBytes?: number;
+    includeMetadata?: boolean;
+    trackQuery?: boolean;
     timeoutMs?: number;
   }) {
     if (args.offset !== undefined && args.limit === undefined) {
@@ -612,13 +624,17 @@ export class MCPServer {
       args.offset !== undefined && args.offset >= 0 ? Math.floor(args.offset) : 0;
     const fetchLimit =
       paginationLimit !== undefined ? paginationLimit + 1 : paginationLimit;
+    const includeMetadata = args.includeMetadata !== false;
+    const trackQuery = args.trackQuery !== false;
 
     const limitedQuery = pushDownResultLimit(args.sql, fetchLimit, config.type, paginationOffset);
     const rawResult = await this._dbManager.runQuery(
       args.dbId,
       limitedQuery.sql,
       args.params,
-      args.timeoutMs
+      args.timeoutMs,
+      includeMetadata,
+      trackQuery
     );
     const hasMore =
       paginationLimit !== undefined
@@ -635,17 +651,44 @@ export class MCPServer {
     const result = sizedResult.result;
     const effectiveHasMore = hasMore || sizedResult.truncated;
 
-    const queryStats = this._dbManager.getQueryStats(args.dbId);
-    const referencedTables = new Set(extractTableNames(args.sql));
-    const includeRelationships = isReadOnlyQuery(args.sql) && referencedTables.size > 0;
-    const relationships = includeRelationships
-      ? (await this._dbManager.getSchema(args.dbId)).relationships.filter((r) =>
-          referencedTables.has(`${r.fromSchema}.${r.fromTable}`.toLowerCase()) ||
-          referencedTables.has(`${r.toSchema}.${r.toTable}`.toLowerCase()) ||
-          referencedTables.has(r.fromTable.toLowerCase()) ||
-          referencedTables.has(r.toTable.toLowerCase())
-        )
-      : [];
+    let metadata;
+    if (includeMetadata) {
+      const queryStats = this._dbManager.getQueryStats(args.dbId);
+      const referencedTables = new Set(extractTableNames(args.sql));
+      const includeRelationships = isReadOnlyQuery(args.sql) && referencedTables.size > 0;
+      const relationships = includeRelationships
+        ? (await this._dbManager.getSchema(args.dbId)).relationships.filter((r) =>
+            referencedTables.has(`${r.fromSchema}.${r.fromTable}`.toLowerCase()) ||
+            referencedTables.has(`${r.toSchema}.${r.toTable}`.toLowerCase()) ||
+            referencedTables.has(r.fromTable.toLowerCase()) ||
+            referencedTables.has(r.toTable.toLowerCase())
+          )
+        : [];
+
+      metadata = {
+        relationships,
+        queryStats,
+        limitPushdownApplied: limitedQuery.applied,
+        pagination:
+          paginationLimit !== undefined
+            ? {
+                limit: paginationLimit,
+                offset: paginationOffset,
+                hasMore: effectiveHasMore,
+                nextOffset: effectiveHasMore ? paginationOffset + result.rowCount : null,
+              }
+            : undefined,
+        responseSize:
+          args.maxBytes !== undefined
+            ? {
+                maxBytes: Math.floor(args.maxBytes),
+                rowsBytes: sizedResult.sizeBytes,
+                rowsTrimmed: sizedResult.truncated,
+                omittedRowCount: sizedResult.omittedRowCount,
+              }
+            : undefined,
+      };
+    }
 
     return {
       content: [
@@ -654,29 +697,7 @@ export class MCPServer {
           text: JSON.stringify(
             {
               ...result,
-              metadata: {
-                relationships,
-                queryStats,
-                limitPushdownApplied: limitedQuery.applied,
-                pagination:
-                  paginationLimit !== undefined
-                    ? {
-                        limit: paginationLimit,
-                        offset: paginationOffset,
-                        hasMore: effectiveHasMore,
-                        nextOffset: effectiveHasMore ? paginationOffset + result.rowCount : null,
-                      }
-                    : undefined,
-                responseSize:
-                  args.maxBytes !== undefined
-                    ? {
-                        maxBytes: Math.floor(args.maxBytes),
-                        rowsBytes: sizedResult.sizeBytes,
-                        rowsTrimmed: sizedResult.truncated,
-                        omittedRowCount: sizedResult.omittedRowCount,
-                      }
-                    : undefined,
-              },
+              ...(metadata ? { metadata } : {}),
             },
             null,
             2
