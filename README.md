@@ -112,7 +112,7 @@ Create a `.mcp-database-server.config` file in your project root:
       "id": "postgres-main",
       "type": "postgres",
       "secretRef": "DB_URL_POSTGRES",
-      "readOnly": false,
+      "readOnly": true,
       "pool": {
         "min": 2,
         "max": 10,
@@ -121,6 +121,16 @@ Create a `.mcp-database-server.config` file in your project root:
       "introspection": {
         "includeViews": true,
         "excludeSchemas": ["pg_catalog"]
+      }
+    },
+    {
+      "id": "mariadb-reporting",
+      "type": "mysql",
+      "secretRef": "DB_URL_MARIADB",
+      "readOnly": true,
+      "pool": {
+        "min": 1,
+        "max": 5
       }
     },
     {
@@ -335,7 +345,7 @@ Controls log output verbosity and formatting.
       "id": "sqlite-local",
       "type": "sqlite",
       "path": "./data/app.db",
-      "readOnly": false
+      "readOnly": true
     }
   ],
   "cache": {
@@ -382,6 +392,7 @@ The server resolves `secretRef` from the process environment first, and then fro
 ```env
 DATABASE_URL=postgresql://user:password@localhost:5432/dbname
 DB_URL_MYSQL=mysql://user:password@localhost:3306/dbname
+DB_URL_MARIADB=mysql://report_user:password@mariadb.local:3306/reporting
 DB_URL_MSSQL=Server=host,1433;Database=db;User Id=sa;Password=pass
 ```
 
@@ -418,6 +429,7 @@ You can still write `"url": "${DATABASE_URL}"`, but `secretRef` is the cleaner o
 |----------|--------|---------|
 | **PostgreSQL** | `postgresql://user:pass@host:port/db` | `postgresql://admin:secret@localhost:5432/myapp` |
 | **MySQL** | `mysql://user:pass@host:port/db` | `mysql://root:password@localhost:3306/myapp` |
+| **MariaDB** | `mysql://user:pass@host:port/db` | `mysql://report_user:password@mariadb.local:3306/reporting` |
 | **SQL Server** | `Server=host,port;Database=db;User Id=user;Password=pass` | `Server=localhost,1433;Database=myapp;User Id=sa;Password=secret` |
 | **SQLite** | Use `path` property | `"path": "./data/app.db"` or `"path": "/var/db/app.sqlite"` |
 
@@ -431,6 +443,11 @@ postgresql://user:pass@host:5432/db?sslmode=require&connect_timeout=10
 **MySQL:**
 ```
 mysql://user:pass@host:3306/db?charset=utf8mb4&timezone=Z
+```
+
+**MariaDB:**
+```
+mysql://user:pass@host:3306/db?charset=utf8mb4
 ```
 
 **SQL Server:**
@@ -508,7 +525,7 @@ $PWD.Path  # prints: C:\Users\username\projects\mcp-database-server
 
 ## Available MCP Tools
 
-This server provides 14 tools for comprehensive database interaction and optimization.
+This server provides 15 tools for comprehensive database interaction and optimization.
 
 ### Tool Reference
 
@@ -518,6 +535,7 @@ This server provides 14 tools for comprehensive database interaction and optimiz
 | `introspect_schema` | Discover and cache database schema | No | Writes cache |
 | `get_schema` | Retrieve cached schema metadata | No | Reads cache |
 | `run_query` | Execute SQL queries with safety controls | Conditional* | Updates stats |
+| `export_query` | Export large read-only query results to a local file | No | No cache |
 | `explain_query` | Analyze query execution plans | No | No cache |
 | `suggest_joins` | Get intelligent join path recommendations | No | Uses cache |
 | `clear_cache` | Clear schema cache and statistics | No | Clears cache |
@@ -655,14 +673,19 @@ Executes SQL queries with automatic schema caching, relationship annotation, and
 | `sql` | string | Yes | SQL query to execute |
 | `params` | array | No | Parameterized query values (prevents SQL injection) |
 | `limit` | number | No | Maximum number of rows to return |
+| `offset` | number | No | Row offset for paginated reads. Requires `limit`. |
+| `maxBytes` | number | No | Approximate max serialized bytes for returned rows. |
 | `timeoutMs` | number | No | Query timeout in milliseconds |
 
 **Example Request:**
 ```json
 {
   "dbId": "postgres-main",
-  "sql": "SELECT * FROM users WHERE active = $1 LIMIT $2",
-  "params": [true, 10],
+  "sql": "SELECT * FROM users WHERE active = $1 ORDER BY id",
+  "params": [true],
+  "limit": 10,
+  "offset": 0,
+  "maxBytes": 32768,
   "timeoutMs": 5000
 }
 ```
@@ -683,6 +706,18 @@ Executes SQL queries with automatic schema caching, relationship annotation, and
       "totalQueries": 10,
       "avgExecutionTime": 20,
       "errorCount": 0
+    },
+    "pagination": {
+      "limit": 10,
+      "offset": 0,
+      "hasMore": true,
+      "nextOffset": 10
+    },
+    "responseSize": {
+      "maxBytes": 32768,
+      "rowsBytes": 1842,
+      "rowsTrimmed": false,
+      "omittedRowCount": 0
     }
   }
 }
@@ -718,6 +753,54 @@ Retrieves database query execution plan without executing the query.
 ```
 
 **Response:** Database-native execution plan (format varies by database type).
+
+---
+
+### 5a. export_query
+
+Exports large read-only query results to a local file under `.sql-mcp-cache/exports`.
+
+**Execution Strategy:**
+- MySQL/MariaDB uses adapter-level row streaming to avoid loading the full result set into memory.
+- PostgreSQL and SQLite use paged export by rewriting top-level `LIMIT/OFFSET` windows.
+- SQL Server export requires a future adapter-specific streaming path and will currently fail unless paging rewrite is supported.
+
+**Input Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `dbId` | string | Yes | Database identifier |
+| `sql` | string | Yes | Read-only SQL query to export |
+| `params` | array | No | Query parameters |
+| `format` | string | No | Output format: `jsonl` or `csv` (default: `jsonl`) |
+| `pageSize` | number | No | Page size for non-streaming adapters (default: `1000`) |
+| `fileName` | string | No | Optional output file name written inside the export directory |
+| `timeoutMs` | number | No | Query timeout in milliseconds |
+
+**Example Request:**
+```json
+{
+  "dbId": "mariadb-reporting",
+  "sql": "SELECT id, email, created_at FROM users ORDER BY id",
+  "format": "jsonl",
+  "fileName": "users-export.jsonl",
+  "timeoutMs": 10000
+}
+```
+
+**Response:**
+```json
+{
+  "dbId": "mariadb-reporting",
+  "outputPath": "/absolute/path/to/.sql-mcp-cache/exports/users-export.jsonl",
+  "format": "jsonl",
+  "strategy": "stream",
+  "rowsExported": 250000,
+  "columns": ["id", "email", "created_at"],
+  "fileSizeBytes": 18342011,
+  "executionTimeMs": 8421
+}
+```
 
 ---
 

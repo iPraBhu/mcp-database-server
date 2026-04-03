@@ -145,6 +145,17 @@ export interface QueryResult {
   affectedRows?: number;
 }
 
+export interface QueryStreamHandlers {
+  onColumns?: (columns: string[]) => Promise<void> | void;
+  onRow: (row: any) => Promise<void> | void;
+}
+
+export interface StreamQueryResult {
+  columns: string[];
+  rowCount: number;
+  executionTimeMs: number;
+}
+
 export interface ExplainResult {
   plan: any;
   formattedPlan?: string;
@@ -256,6 +267,12 @@ export interface DatabaseAdapter {
   disconnect(): Promise<void>;
   introspect(options?: IntrospectionOptions): Promise<DatabaseSchema>;
   query(sql: string, params?: any[], timeoutMs?: number): Promise<QueryResult>;
+  streamQuery?(
+    sql: string,
+    params: any[] | undefined,
+    timeoutMs: number | undefined,
+    handlers: QueryStreamHandlers
+  ): Promise<StreamQueryResult>;
   explain(sql: string, params?: any[]): Promise<ExplainResult>;
   testConnection(): Promise<boolean>;
   getVersion(): Promise<string>;

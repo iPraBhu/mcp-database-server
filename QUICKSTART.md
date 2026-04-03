@@ -9,6 +9,20 @@ This guide will help you get up and running with mcp-database-server in minutes.
 
 ## Installation
 
+### Option 1: Install from npm
+
+```bash
+npm install -g @adevguide/mcp-database-server
+```
+
+Then you can launch the server with:
+
+```bash
+mcp-database-server --config /absolute/path/to/.mcp-database-server.config
+```
+
+### Option 2: Build from source
+
 1. Clone or download this repository
 2. Install dependencies:
 
@@ -64,7 +78,13 @@ The repository includes a sample `mcp-database-server.config.json`. Customize it
 
 ### Step 3: Test Connection
 
-Run a quick health check:
+If you installed from npm:
+
+```bash
+mcp-database-server --config /absolute/path/to/.mcp-database-server.config
+```
+
+If you built from source:
 
 ```bash
 node dist/index.js --config ./.mcp-database-server.config
@@ -80,6 +100,19 @@ Add to your Claude Desktop config file:
 
 **macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
 **Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
+
+```json
+{
+  "mcpServers": {
+    "mcp-database-server": {
+      "command": "mcp-database-server",
+      "args": ["--config", "/absolute/path/to/.mcp-database-server.config"]
+    }
+  }
+}
+```
+
+If you want to run directly from source instead of installing from npm:
 
 ```json
 {
@@ -101,8 +134,9 @@ Add to your Claude Desktop config file:
 ### Other MCP Clients
 
 Configure according to your MCP client's documentation, using:
-- **Command:** `node`
-- **Args:** `["/path/to/dist/index.js"]` (or include `--config /path/to/config.json` if using a custom config file name/location)
+- **npm install:** Command `mcp-database-server`
+- **source build:** Command `node`
+- **Args:** `["--config", "/path/to/.mcp-database-server.config"]` or for source builds `["/path/to/dist/index.js", "--config", "/path/to/.mcp-database-server.config"]`
 
 ## First Steps
 
@@ -125,7 +159,10 @@ Use introspect_schema with dbId: "my-postgres"
 ```
 Use run_query with:
 - dbId: "my-postgres"
-- sql: "SELECT * FROM users LIMIT 10"
+- sql: "SELECT * FROM users ORDER BY id"
+- limit: 10
+- offset: 0
+- maxBytes: 32768
 ```
 
 ### 4. Get Join Suggestions
@@ -134,6 +171,16 @@ Use run_query with:
 Use suggest_joins with:
 - dbId: "my-postgres"  
 - tables: ["users", "orders"]
+```
+
+### 5. Export a Large Query
+
+```
+Use export_query with:
+- dbId: "my-postgres"
+- sql: "SELECT id, email, created_at FROM users ORDER BY id"
+- format: "jsonl"
+- fileName: "users-export.jsonl"
 ```
 
 ## SQLite Quick Start

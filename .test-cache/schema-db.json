@@ -1,0 +1,33 @@
+{
+  "schema": {
+    "dbId": "schema-db",
+    "dbType": "sqlite",
+    "schemas": [
+      {
+        "name": "main",
+        "tables": [
+          {
+            "schema": "main",
+            "name": "users",
+            "type": "table",
+            "columns": [
+              {
+                "name": "id",
+                "dataType": "INTEGER",
+                "nullable": true,
+                "isAutoIncrement": true
+              }
+            ],
+            "indexes": [],
+            "foreignKeys": []
+          }
+        ]
+      }
+    ],
+    "introspectedAt": "2026-04-03T19:07:13.954Z",
+    "version": "97ba46058ed0ec30"
+  },
+  "relationships": [],
+  "cachedAt": "2026-04-03T19:07:13.962Z",
+  "ttlMinutes": 10
+}

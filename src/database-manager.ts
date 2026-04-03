@@ -1,9 +1,24 @@
-import { DatabaseAdapter, DatabaseConfig, IntrospectionOptions, QueryResult } from './types.js';
+import {
+  DatabaseAdapter,
+  DatabaseConfig,
+  IntrospectionOptions,
+  QueryResult,
+  QueryStreamHandlers,
+  StreamQueryResult,
+} from './types.js';
 import { createAdapter } from './adapters/index.js';
 import { SchemaCache, CacheEntry } from './cache.js';
 import { QueryTracker } from './query-tracker.js';
-import { isWriteOperation, findJoinPaths, getSqlOperation, isReadOnlyQuery } from './utils.js';
+import {
+  extractTableNames,
+  isWriteOperation,
+  findJoinPaths,
+  getSqlOperation,
+  isReadOnlyQuery,
+} from './utils.js';
 import { getLogger } from './logger.js';
+
+const AUTO_EXPLAIN_THRESHOLD_MS = 1000;
 
 export interface DatabaseManagerOptions {
   cacheDir: string;
@@ -170,9 +185,11 @@ export class DatabaseManager {
   ): Promise<QueryResult> {
     this.validateQueryAccess(dbId, sql, 'execute');
     const writeOperation = isWriteOperation(sql);
+    const readOnlyQuery = isReadOnlyQuery(sql);
+    const referencedTables = readOnlyQuery ? extractTableNames(sql) : [];
 
     // Ensure schema is cached (for relationship annotation)
-    if (!writeOperation) {
+    if (readOnlyQuery && referencedTables.length > 0) {
       await this.introspectSchema(dbId, false);
     }
 
@@ -181,10 +198,10 @@ export class DatabaseManager {
 
     try {
       const result = await adapter.query(sql, params, timeoutMs);
-      
-      // Get EXPLAIN plan for performance analysis (if not a write operation)
+
+      // Collect EXPLAIN only for slow read-only queries to avoid doubling fast-query latency.
       let explainPlan;
-      if (!writeOperation) {
+      if (readOnlyQuery && result.executionTimeMs >= AUTO_EXPLAIN_THRESHOLD_MS) {
         try {
           explainPlan = await adapter.explain(sql, params);
         } catch (_explainError) {
@@ -213,6 +230,36 @@ export class DatabaseManager {
     await this.ensureConnected(dbId);
     const adapter = this.getAdapter(dbId);
     return adapter.explain(sql, params);
+  }
+
+  async runReadQueryPage(
+    dbId: string,
+    sql: string,
+    params: any[] = [],
+    timeoutMs?: number
+  ): Promise<QueryResult> {
+    this.validateQueryAccess(dbId, sql, 'analyze');
+    await this.ensureConnected(dbId);
+    const adapter = this.getAdapter(dbId);
+    return adapter.query(sql, params, timeoutMs);
+  }
+
+  async streamReadQuery(
+    dbId: string,
+    sql: string,
+    params: any[] = [],
+    timeoutMs: number | undefined,
+    handlers: QueryStreamHandlers
+  ): Promise<StreamQueryResult | null> {
+    this.validateQueryAccess(dbId, sql, 'analyze');
+    await this.ensureConnected(dbId);
+    const adapter = this.getAdapter(dbId);
+
+    if (!adapter.streamQuery) {
+      return null;
+    }
+
+    return adapter.streamQuery(sql, params, timeoutMs, handlers);
   }
 
   async suggestJoins(dbId: string, tables: string[]): Promise<any[]> {

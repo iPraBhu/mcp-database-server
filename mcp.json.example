@@ -1,12 +1,8 @@
 {
   "mcpServers": {
     "mcp-database-server": {
-      "command": "node",
-      "args": [
-        "/path/to/mcp-database-server/dist/index.js",
-        "--config",
-        "/path/to/.mcp-database-server.config"
-      ]
+      "command": "mcp-database-server",
+      "args": ["--config", "/path/to/.mcp-database-server.config"]
     }
   }
 }

@@ -4,8 +4,12 @@ import {
   interpolateEnv,
   extractTableNames,
   findJoinPaths,
+  formatCsvValue,
   isWriteOperation,
   limitRows,
+  pushDownResultLimit,
+  serializeCsvRow,
+  trimRowsBySerializedSize,
 } from '../src/utils.js';
 
 describe('Utils', () => {
@@ -158,6 +162,166 @@ describe('Utils', () => {
 
       expect(result.rows).toEqual([{ id: 1 }, { id: 2 }]);
       expect(result.rowCount).toBe(2);
+    });
+
+    it('should apply offset before trimming', () => {
+      const result = limitRows(
+        {
+          rows: [{ id: 1 }, { id: 2 }, { id: 3 }, { id: 4 }],
+          columns: ['id'],
+          rowCount: 4,
+          executionTimeMs: 1,
+        },
+        2,
+        1
+      );
+
+      expect(result.rows).toEqual([{ id: 2 }, { id: 3 }]);
+      expect(result.rowCount).toBe(2);
+    });
+  });
+
+  describe('pushDownResultLimit', () => {
+    it('should add a top-level limit for MariaDB/MySQL queries', () => {
+      const result = pushDownResultLimit('SELECT * FROM users', 10, 'mysql');
+
+      expect(result.applied).toBe(true);
+      expect(result.sql).toContain('LIMIT 10');
+    });
+
+    it('should add a top-level limit for CTE queries', () => {
+      const result = pushDownResultLimit(
+        'WITH active_users AS (SELECT * FROM users) SELECT * FROM active_users',
+        5,
+        'mysql'
+      );
+
+      expect(result.applied).toBe(true);
+      expect(result.sql).toContain('LIMIT 5');
+    });
+
+    it('should tighten an existing larger limit', () => {
+      const result = pushDownResultLimit('SELECT * FROM users LIMIT 100', 10, 'mysql');
+
+      expect(result.applied).toBe(true);
+      expect(result.sql).toContain('LIMIT 10');
+    });
+
+    it('should keep a smaller existing limit unchanged', () => {
+      const result = pushDownResultLimit('SELECT * FROM users LIMIT 5', 10, 'mysql');
+
+      expect(result.applied).toBe(false);
+      expect(result.sql).toBe('SELECT * FROM users LIMIT 5');
+    });
+
+    it('should preserve offsets when tightening a limit', () => {
+      const result = pushDownResultLimit('SELECT * FROM users LIMIT 50 OFFSET 20', 10, 'mysql');
+
+      expect(result.applied).toBe(true);
+      expect(result.sql).toContain('LIMIT 10 OFFSET 20');
+    });
+
+    it('should add a paginated window when offset is requested', () => {
+      const result = pushDownResultLimit('SELECT * FROM users', 10, 'mysql', 30);
+
+      expect(result.applied).toBe(true);
+      expect(result.sql).toContain('LIMIT 10 OFFSET 30');
+    });
+
+    it('should skip pushdown offset when the SQL already has a limit clause', () => {
+      const result = pushDownResultLimit('SELECT * FROM users LIMIT 100', 10, 'mysql', 30);
+
+      expect(result).toEqual({
+        sql: 'SELECT * FROM users LIMIT 100',
+        applied: false,
+      });
+    });
+
+    it('should skip writes and unsupported dialects', () => {
+      expect(pushDownResultLimit('UPDATE users SET name = ?', 10, 'mysql')).toEqual({
+        sql: 'UPDATE users SET name = ?',
+        applied: false,
+      });
+
+      expect(pushDownResultLimit('SELECT * FROM users', 10, 'mssql')).toEqual({
+        sql: 'SELECT * FROM users',
+        applied: false,
+      });
+    });
+  });
+
+  describe('trimRowsBySerializedSize', () => {
+    it('should leave rows untouched when under the size cap', () => {
+      const result = trimRowsBySerializedSize(
+        {
+          rows: [{ id: 1 }, { id: 2 }],
+          columns: ['id'],
+          rowCount: 2,
+          executionTimeMs: 1,
+        },
+        1024
+      );
+
+      expect(result.truncated).toBe(false);
+      expect(result.result.rows).toHaveLength(2);
+    });
+
+    it('should trim rows to fit the serialized size cap', () => {
+      const result = trimRowsBySerializedSize(
+        {
+          rows: [
+            { id: 1, note: 'x'.repeat(30) },
+            { id: 2, note: 'y'.repeat(30) },
+            { id: 3, note: 'z'.repeat(30) },
+          ],
+          columns: ['id', 'note'],
+          rowCount: 3,
+          executionTimeMs: 1,
+        },
+        120
+      );
+
+      expect(result.truncated).toBe(true);
+      expect(result.result.rows).toHaveLength(2);
+      expect(result.omittedRowCount).toBe(1);
+      expect(result.sizeBytes).toBeLessThanOrEqual(120);
+    });
+
+    it('should allow an empty row set when the cap is extremely small', () => {
+      const result = trimRowsBySerializedSize(
+        {
+          rows: [{ id: 1, note: 'x'.repeat(100) }],
+          columns: ['id', 'note'],
+          rowCount: 1,
+          executionTimeMs: 1,
+        },
+        2
+      );
+
+      expect(result.truncated).toBe(true);
+      expect(result.result.rows).toEqual([]);
+      expect(result.sizeBytes).toBeLessThanOrEqual(2);
+    });
+  });
+
+  describe('CSV serialization', () => {
+    it('should escape CSV values correctly', () => {
+      expect(formatCsvValue('hello,world')).toBe('"hello,world"');
+      expect(formatCsvValue('say "hi"')).toBe('"say ""hi"""');
+      expect(formatCsvValue(null)).toBe('');
+    });
+
+    it('should serialize a row using the requested column order', () => {
+      const result = serializeCsvRow(
+        {
+          id: 1,
+          name: 'Alice',
+          meta: { active: true },
+        },
+        ['name', 'id', 'meta']
+      );
+
+      expect(result).toBe('Alice,1,"{""active"":true}"');
     });
   });
 });

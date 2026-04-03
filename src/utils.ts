@@ -1,6 +1,34 @@
 import crypto from 'crypto';
 import { URL } from 'url';
-import { Relationship, DatabaseSchema, JoinPath } from './types.js';
+import sqlParserPkg from 'node-sql-parser';
+import { Relationship, DatabaseSchema, JoinPath, DatabaseType } from './types.js';
+
+const { Parser } = sqlParserPkg;
+const sqlParser = new Parser();
+
+const LIMIT_PUSHDOWN_DIALECTS: Partial<Record<DatabaseType, string>> = {
+  mysql: 'MariaDB',
+  postgres: 'Postgresql',
+  sqlite: 'SQLite',
+};
+
+type ParsedLimitNode =
+  | {
+      type: 'number';
+      value: number | string;
+    }
+  | {
+      type: string;
+      value?: unknown;
+    };
+
+interface ParsedSelectAst {
+  type?: string;
+  limit?: {
+    seperator?: string;
+    value?: ParsedLimitNode[];
+  } | null;
+}
 
 /**
  * Redact secrets from URLs and connection strings
@@ -200,6 +228,92 @@ export function isReadOnlyQuery(sql: string): boolean {
   return operation === 'SELECT' || operation === 'WITH';
 }
 
+export function pushDownResultLimit(
+  sql: string,
+  limit: number | undefined,
+  dbType: DatabaseType,
+  offset: number = 0
+): { sql: string; applied: boolean } {
+  if (
+    limit === undefined ||
+    !Number.isFinite(limit) ||
+    limit < 0 ||
+    !Number.isFinite(offset) ||
+    offset < 0 ||
+    !isReadOnlyQuery(sql)
+  ) {
+    return { sql, applied: false };
+  }
+
+  const dialect = LIMIT_PUSHDOWN_DIALECTS[dbType];
+  if (!dialect) {
+    return { sql, applied: false };
+  }
+
+  const normalizedLimit = Math.floor(limit);
+  const normalizedOffset = Math.floor(offset);
+
+  try {
+    const ast = sqlParser.astify(sql, { database: dialect });
+    if (Array.isArray(ast)) {
+      return { sql, applied: false };
+    }
+
+    const selectAst = ast as ParsedSelectAst;
+    if (selectAst.type !== 'select') {
+      return { sql, applied: false };
+    }
+
+    const limitClause = selectAst.limit;
+    if (!limitClause) {
+      selectAst.limit = {
+        seperator: normalizedOffset > 0 ? 'offset' : '',
+        value:
+          normalizedOffset > 0
+            ? [
+                { type: 'number', value: normalizedLimit },
+                { type: 'number', value: normalizedOffset },
+              ]
+            : [{ type: 'number', value: normalizedLimit }],
+      };
+
+      return {
+        sql: sqlParser.sqlify(selectAst as any, { database: dialect }),
+        applied: true,
+      };
+    }
+
+    const values = limitClause.value;
+    if (!values || values.length === 0) {
+      return { sql, applied: false };
+    }
+
+    if (normalizedOffset > 0) {
+      return { sql, applied: false };
+    }
+
+    const targetIndex = limitClause.seperator === ',' ? 1 : 0;
+    const targetNode = values[targetIndex];
+    if (!targetNode || targetNode.type !== 'number') {
+      return { sql, applied: false };
+    }
+
+    const currentLimit = Number(targetNode.value);
+    if (!Number.isFinite(currentLimit) || currentLimit <= normalizedLimit) {
+      return { sql, applied: false };
+    }
+
+    targetNode.value = normalizedLimit;
+
+    return {
+      sql: sqlParser.sqlify(selectAst as any, { database: dialect }),
+      applied: true,
+    };
+  } catch {
+    return { sql, applied: false };
+  }
+}
+
 /**
  * Find join paths between tables using relationship graph
  */
@@ -341,16 +455,101 @@ export function findJoinPaths(
 
 export function limitRows<T extends { rows: any[]; rowCount: number }>(
   result: T,
-  limit?: number
+  limit?: number,
+  offset: number = 0
 ): T {
-  if (limit === undefined || limit < 0) {
+  if ((limit === undefined || limit < 0) && offset <= 0) {
     return result;
   }
 
-  const rows = result.rows.slice(0, limit);
+  const start = Math.max(0, offset);
+  const end = limit === undefined || limit < 0 ? undefined : start + limit;
+  const rows = result.rows.slice(start, end);
   return {
     ...result,
     rows,
     rowCount: rows.length,
+  };
+}
+
+export function formatCsvValue(value: unknown): string {
+  let normalized: string;
+
+  if (value === null || value === undefined) {
+    normalized = '';
+  } else if (value instanceof Date) {
+    normalized = value.toISOString();
+  } else if (typeof value === 'object') {
+    normalized = JSON.stringify(value);
+  } else {
+    normalized = String(value);
+  }
+
+  return /[",\n\r]/.test(normalized) ? `"${normalized.replace(/"/g, '""')}"` : normalized;
+}
+
+export function serializeCsvRow(row: Record<string, unknown>, columns: string[]): string {
+  return columns.map((column) => formatCsvValue(row[column])).join(',');
+}
+
+export function trimRowsBySerializedSize<T extends { rows: any[]; rowCount: number }>(
+  result: T,
+  maxBytes?: number
+): {
+  result: T;
+  truncated: boolean;
+  omittedRowCount: number;
+  sizeBytes: number;
+} {
+  if (maxBytes === undefined || !Number.isFinite(maxBytes) || maxBytes < 0) {
+    return {
+      result,
+      truncated: false,
+      omittedRowCount: 0,
+      sizeBytes: Buffer.byteLength(JSON.stringify(result.rows), 'utf8'),
+    };
+  }
+
+  const normalizedMaxBytes = Math.floor(maxBytes);
+  const measureRows = (rowCount: number) =>
+    Buffer.byteLength(JSON.stringify(result.rows.slice(0, rowCount)), 'utf8');
+
+  const fullSizeBytes = measureRows(result.rows.length);
+  if (fullSizeBytes <= normalizedMaxBytes) {
+    return {
+      result,
+      truncated: false,
+      omittedRowCount: 0,
+      sizeBytes: fullSizeBytes,
+    };
+  }
+
+  let low = 0;
+  let high = result.rows.length;
+  let bestFit = 0;
+
+  while (low <= high) {
+    const mid = Math.floor((low + high) / 2);
+    const sizeBytes = measureRows(mid);
+
+    if (sizeBytes <= normalizedMaxBytes) {
+      bestFit = mid;
+      low = mid + 1;
+    } else {
+      high = mid - 1;
+    }
+  }
+
+  const rows = result.rows.slice(0, bestFit);
+
+  return {
+    result: {
+      ...result,
+      rows,
+      rowCount: rows.length,
+    },
+    truncated: true,
+    omittedRowCount: result.rows.length - rows.length,
+    sizeBytes: measureRows(rows.length),
   };
 }

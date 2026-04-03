@@ -1,3 +1,6 @@
+import fs from 'fs';
+import fsPromises from 'fs/promises';
+import path from 'path';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import {
@@ -10,7 +13,16 @@ import {
 import { DatabaseManager } from './database-manager.js';
 import { ServerConfig } from './types.js';
 import { getLogger } from './logger.js';
-import { extractTableNames, limitRows, redactUrl } from './utils.js';
+import {
+  extractTableNames,
+  formatCsvValue,
+  isReadOnlyQuery,
+  limitRows,
+  pushDownResultLimit,
+  redactUrl,
+  serializeCsvRow,
+  trimRowsBySerializedSize,
+} from './utils.js';
 
 export class MCPServer {
   private server: Server;
@@ -147,6 +159,14 @@ export class MCPServer {
                 type: 'number',
                 description: 'Maximum number of rows to return',
               },
+              offset: {
+                type: 'number',
+                description: 'Optional row offset for paginated reads. Requires limit.',
+              },
+              maxBytes: {
+                type: 'number',
+                description: 'Approximate max serialized bytes for returned rows.',
+              },
               timeoutMs: {
                 type: 'number',
                 description: 'Query timeout in milliseconds',
@@ -173,6 +193,46 @@ export class MCPServer {
                 type: 'array',
                 description: 'Query parameters',
                 items: {},
+              },
+            },
+            required: ['dbId', 'sql'],
+          },
+        },
+        {
+          name: 'export_query',
+          description: 'Export large read-only query results to a local file',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              dbId: {
+                type: 'string',
+                description: 'Database ID',
+              },
+              sql: {
+                type: 'string',
+                description: 'Read-only SQL query to export',
+              },
+              params: {
+                type: 'array',
+                description: 'Query parameters',
+                items: {},
+              },
+              format: {
+                type: 'string',
+                enum: ['jsonl', 'csv'],
+                description: 'Output file format',
+              },
+              pageSize: {
+                type: 'number',
+                description: 'Page size for non-streaming adapters',
+              },
+              fileName: {
+                type: 'string',
+                description: 'Optional output file name written inside the export directory',
+              },
+              timeoutMs: {
+                type: 'number',
+                description: 'Query timeout in milliseconds',
               },
             },
             required: ['dbId', 'sql'],
@@ -343,6 +403,9 @@ export class MCPServer {
 
           case 'explain_query':
             return await this.handleExplainQuery(args as any);
+
+          case 'export_query':
+            return await this.handleExportQuery(args as any);
 
           case 'suggest_joins':
             return await this.handleSuggestJoins(args as any);
@@ -530,17 +593,59 @@ export class MCPServer {
     sql: string;
     params?: any[];
     limit?: number;
+    offset?: number;
+    maxBytes?: number;
     timeoutMs?: number;
   }) {
-    const result = limitRows(
-      await this._dbManager.runQuery(args.dbId, args.sql, args.params, args.timeoutMs),
-      args.limit
-    );
+    if (args.offset !== undefined && args.limit === undefined) {
+      throw new Error('offset requires limit');
+    }
 
-    // Get relevant relationships for the query
-    const cacheEntry = await this._dbManager.getSchema(args.dbId);
+    const config = this._dbManager.getConfig(args.dbId);
+    if (!config) {
+      throw new Error(`Database not found: ${args.dbId}`);
+    }
+
+    const paginationLimit =
+      args.limit !== undefined && args.limit >= 0 ? Math.floor(args.limit) : undefined;
+    const paginationOffset =
+      args.offset !== undefined && args.offset >= 0 ? Math.floor(args.offset) : 0;
+    const fetchLimit =
+      paginationLimit !== undefined ? paginationLimit + 1 : paginationLimit;
+
+    const limitedQuery = pushDownResultLimit(args.sql, fetchLimit, config.type, paginationOffset);
+    const rawResult = await this._dbManager.runQuery(
+      args.dbId,
+      limitedQuery.sql,
+      args.params,
+      args.timeoutMs
+    );
+    const hasMore =
+      paginationLimit !== undefined
+        ? limitedQuery.applied
+          ? rawResult.rows.length > paginationLimit
+          : rawResult.rows.length > paginationOffset + paginationLimit
+        : false;
+    const pagedResult = limitRows(
+      rawResult,
+      paginationLimit,
+      limitedQuery.applied ? 0 : paginationOffset
+    );
+    const sizedResult = trimRowsBySerializedSize(pagedResult, args.maxBytes);
+    const result = sizedResult.result;
+    const effectiveHasMore = hasMore || sizedResult.truncated;
+
     const queryStats = this._dbManager.getQueryStats(args.dbId);
     const referencedTables = new Set(extractTableNames(args.sql));
+    const includeRelationships = isReadOnlyQuery(args.sql) && referencedTables.size > 0;
+    const relationships = includeRelationships
+      ? (await this._dbManager.getSchema(args.dbId)).relationships.filter((r) =>
+          referencedTables.has(`${r.fromSchema}.${r.fromTable}`.toLowerCase()) ||
+          referencedTables.has(`${r.toSchema}.${r.toTable}`.toLowerCase()) ||
+          referencedTables.has(r.fromTable.toLowerCase()) ||
+          referencedTables.has(r.toTable.toLowerCase())
+        )
+      : [];
 
     return {
       content: [
@@ -550,13 +655,27 @@ export class MCPServer {
             {
               ...result,
               metadata: {
-                relationships: cacheEntry.relationships.filter((r) =>
-                  referencedTables.has(`${r.fromSchema}.${r.fromTable}`.toLowerCase()) ||
-                  referencedTables.has(`${r.toSchema}.${r.toTable}`.toLowerCase()) ||
-                  referencedTables.has(r.fromTable.toLowerCase()) ||
-                  referencedTables.has(r.toTable.toLowerCase())
-                ),
+                relationships,
                 queryStats,
+                limitPushdownApplied: limitedQuery.applied,
+                pagination:
+                  paginationLimit !== undefined
+                    ? {
+                        limit: paginationLimit,
+                        offset: paginationOffset,
+                        hasMore: effectiveHasMore,
+                        nextOffset: effectiveHasMore ? paginationOffset + result.rowCount : null,
+                      }
+                    : undefined,
+                responseSize:
+                  args.maxBytes !== undefined
+                    ? {
+                        maxBytes: Math.floor(args.maxBytes),
+                        rowsBytes: sizedResult.sizeBytes,
+                        rowsTrimmed: sizedResult.truncated,
+                        omittedRowCount: sizedResult.omittedRowCount,
+                      }
+                    : undefined,
               },
             },
             null,
@@ -578,6 +697,185 @@ export class MCPServer {
         },
       ],
     };
+  }
+
+  private async handleExportQuery(args: {
+    dbId: string;
+    sql: string;
+    params?: any[];
+    format?: 'jsonl' | 'csv';
+    pageSize?: number;
+    fileName?: string;
+    timeoutMs?: number;
+  }) {
+    const config = this._dbManager.getConfig(args.dbId);
+    if (!config) {
+      throw new Error(`Database not found: ${args.dbId}`);
+    }
+
+    const format = args.format === 'csv' ? 'csv' : 'jsonl';
+    const pageSize = args.pageSize !== undefined && args.pageSize > 0 ? Math.floor(args.pageSize) : 1000;
+    const exportDir = path.resolve(this._config.cache?.directory || '.sql-mcp-cache', 'exports');
+    await fsPromises.mkdir(exportDir, { recursive: true });
+
+    const defaultFileName = `${args.dbId}-${Date.now()}.${format}`;
+    const requestedFileName = args.fileName ? path.basename(args.fileName) : defaultFileName;
+    const outputFileName = path.extname(requestedFileName)
+      ? requestedFileName
+      : `${requestedFileName}.${format}`;
+    const outputPath = path.join(exportDir, outputFileName);
+
+    const writer = fs.createWriteStream(outputPath, { encoding: 'utf8' });
+    let columns: string[] = [];
+    let rowsExported = 0;
+    let wroteCsvHeader = false;
+    let strategy: 'stream' | 'paged' = 'paged';
+    let executionTimeMs = 0;
+    let pages = 0;
+
+    const writeChunk = async (chunk: string) =>
+      await new Promise<void>((resolve, reject) => {
+        const onError = (error: Error) => {
+          writer.off('drain', onDrain);
+          reject(error);
+        };
+        const onDrain = () => {
+          writer.off('error', onError);
+          resolve();
+        };
+
+        writer.once('error', onError);
+        if (writer.write(chunk, 'utf8')) {
+          writer.off('error', onError);
+          resolve();
+        } else {
+          writer.once('drain', onDrain);
+        }
+      });
+
+    const closeWriter = async () =>
+      await new Promise<void>((resolve, reject) => {
+        writer.once('error', reject);
+        writer.end(() => resolve());
+      });
+
+    const ensureCsvHeader = async () => {
+      if (format !== 'csv' || wroteCsvHeader || columns.length === 0) {
+        return;
+      }
+
+      await writeChunk(`${columns.map((column) => formatCsvValue(column)).join(',')}\n`);
+      wroteCsvHeader = true;
+    };
+
+    const writeRow = async (row: Record<string, unknown>) => {
+      if (columns.length === 0) {
+        columns = Object.keys(row);
+      }
+
+      await ensureCsvHeader();
+      await writeChunk(
+        format === 'jsonl' ? `${JSON.stringify(row)}\n` : `${serializeCsvRow(row, columns)}\n`
+      );
+      rowsExported++;
+    };
+
+    try {
+      const streamResult = await this._dbManager.streamReadQuery(
+        args.dbId,
+        args.sql,
+        args.params,
+        args.timeoutMs,
+        {
+          onColumns: async (nextColumns) => {
+            if (columns.length === 0) {
+              columns = nextColumns;
+            }
+            await ensureCsvHeader();
+          },
+          onRow: async (row) => {
+            await writeRow(row);
+          },
+        }
+      );
+
+      if (streamResult) {
+        strategy = 'stream';
+        executionTimeMs = streamResult.executionTimeMs;
+        if (columns.length === 0 && streamResult.columns.length > 0) {
+          columns = streamResult.columns;
+          await ensureCsvHeader();
+        }
+      } else {
+        let offset = 0;
+
+        while (true) {
+          const pagedQuery = pushDownResultLimit(args.sql, pageSize + 1, config.type, offset);
+          if (!pagedQuery.applied) {
+            throw new Error(
+              'export_query requires a pushdown-compatible read-only query for this adapter. For MySQL/MariaDB, streaming export is used automatically. For other adapters, avoid top-level LIMIT/OFFSET.'
+            );
+          }
+
+          const result = await this._dbManager.runReadQueryPage(
+            args.dbId,
+            pagedQuery.sql,
+            args.params,
+            args.timeoutMs
+          );
+          executionTimeMs += result.executionTimeMs;
+          pages++;
+
+          if (columns.length === 0 && result.columns.length > 0) {
+            columns = result.columns;
+            await ensureCsvHeader();
+          }
+
+          const hasMore = result.rows.length > pageSize;
+          const rows = result.rows.slice(0, pageSize);
+
+          for (const row of rows) {
+            await writeRow(row);
+          }
+
+          offset += rows.length;
+          if (!hasMore || rows.length === 0) {
+            break;
+          }
+        }
+      }
+
+      await closeWriter();
+      const stats = await fsPromises.stat(outputPath);
+
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(
+              {
+                dbId: args.dbId,
+                outputPath,
+                format,
+                strategy,
+                rowsExported,
+                columns,
+                fileSizeBytes: stats.size,
+                executionTimeMs,
+                pageSize: strategy === 'paged' ? pageSize : undefined,
+                pages: strategy === 'paged' ? pages : undefined,
+              },
+              null,
+              2
+            ),
+          },
+        ],
+      };
+    } catch (error) {
+      writer.destroy();
+      await fsPromises.unlink(outputPath).catch(() => undefined);
+      throw error;
+    }
   }
 
   private async handleSuggestJoins(args: { dbId: string; tables: string[] }) {

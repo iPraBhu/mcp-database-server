@@ -3,6 +3,7 @@ import { BaseAdapter } from './base.js';
 import {
   DatabaseSchema,
   QueryResult,
+  QueryStreamHandlers,
   ExplainResult,
   IntrospectionOptions,
   TableMetadata,
@@ -10,6 +11,7 @@ import {
   IndexMetadata,
   ForeignKeyMetadata,
   SchemaMetadata,
+  StreamQueryResult,
 } from '../types.js';
 import { generateSchemaVersion } from '../utils.js';
 
@@ -19,12 +21,17 @@ export class MySQLAdapter extends BaseAdapter {
 
   async connect(): Promise<void> {
     try {
+      const connectionLimit = this._config.pool?.max || 10;
       this.pool = mysql.createPool({
         uri: this._config.url,
         waitForConnections: true,
-        connectionLimit: this._config.pool?.max || 10,
+        connectionLimit,
+        maxIdle: connectionLimit,
+        idleTimeout: this._config.pool?.idleTimeoutMillis || 60000,
         queueLimit: 0,
         connectTimeout: this._config.pool?.connectionTimeoutMillis || 10000,
+        enableKeepAlive: true,
+        keepAliveInitialDelay: 0,
       });
 
       // Test connection and get database name
@@ -84,8 +91,6 @@ export class MySQLAdapter extends BaseAdapter {
     schemaName: string,
     options?: IntrospectionOptions
   ): Promise<TableMetadata[]> {
-    const result: TableMetadata[] = [];
-
     let tableTypes = "'BASE TABLE'";
     if (options?.includeViews) {
       tableTypes += ",'VIEW'";
@@ -100,15 +105,26 @@ export class MySQLAdapter extends BaseAdapter {
     `;
 
     const [rows] = await this.pool!.query(tablesQuery, [schemaName]);
+    const tableRows = rows as any[];
+    const tableNames = tableRows.map((row) => row.TABLE_NAME);
 
-    for (const row of rows as any[]) {
-      const columns = await this.getColumns(schemaName, row.TABLE_NAME);
-      const indexes = await this.getIndexes(schemaName, row.TABLE_NAME);
-      const foreignKeys = await this.getForeignKeys(schemaName, row.TABLE_NAME);
+    if (tableNames.length === 0) {
+      return [];
+    }
 
+    const [columnsByTable, indexesByTable, foreignKeysByTable] = await Promise.all([
+      this.getColumnsByTable(schemaName, tableNames),
+      this.getIndexesByTable(schemaName, tableNames),
+      this.getForeignKeysByTable(schemaName, tableNames),
+    ]);
+
+    return tableRows.map((row) => {
+      const columns = columnsByTable.get(row.TABLE_NAME) || [];
+      const indexes = indexesByTable.get(row.TABLE_NAME) || [];
+      const foreignKeys = foreignKeysByTable.get(row.TABLE_NAME) || [];
       const primaryKey = indexes.find((idx) => idx.isPrimary);
 
-      result.push({
+      return {
         schema: schemaName,
         name: row.TABLE_NAME,
         type: row.TABLE_TYPE === 'VIEW' ? 'view' : 'table',
@@ -117,15 +133,18 @@ export class MySQLAdapter extends BaseAdapter {
         indexes: indexes.filter((idx) => !idx.isPrimary),
         foreignKeys,
         comment: row.TABLE_COMMENT,
-      });
-    }
-
-    return result;
+      };
+    });
   }
 
-  private async getColumns(schemaName: string, tableName: string): Promise<ColumnMetadata[]> {
+  private async getColumnsByTable(
+    schemaName: string,
+    tableNames: string[]
+  ): Promise<Map<string, ColumnMetadata[]>> {
+    const placeholders = tableNames.map(() => '?').join(', ');
     const query = `
       SELECT
+        TABLE_NAME,
         COLUMN_NAME,
         DATA_TYPE,
         IS_NULLABLE,
@@ -136,52 +155,74 @@ export class MySQLAdapter extends BaseAdapter {
         EXTRA,
         COLUMN_COMMENT
       FROM information_schema.COLUMNS
-      WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?
-      ORDER BY ORDINAL_POSITION
+      WHERE TABLE_SCHEMA = ? AND TABLE_NAME IN (${placeholders})
+      ORDER BY TABLE_NAME, ORDINAL_POSITION
     `;
 
-    const [rows] = await this.pool!.query(query, [schemaName, tableName]);
+    const [rows] = await this.pool!.query(query, [schemaName, ...tableNames]);
+    const columnsByTable = new Map<string, ColumnMetadata[]>();
 
-    return (rows as any[]).map((row) => ({
-      name: row.COLUMN_NAME,
-      dataType: row.DATA_TYPE,
-      nullable: row.IS_NULLABLE === 'YES',
-      defaultValue: row.COLUMN_DEFAULT,
-      maxLength: row.CHARACTER_MAXIMUM_LENGTH,
-      precision: row.NUMERIC_PRECISION,
-      scale: row.NUMERIC_SCALE,
-      isAutoIncrement: row.EXTRA.includes('auto_increment'),
-      comment: row.COLUMN_COMMENT,
-    }));
+    for (const row of rows as any[]) {
+      const columns = columnsByTable.get(row.TABLE_NAME) || [];
+      columns.push({
+        name: row.COLUMN_NAME,
+        dataType: row.DATA_TYPE,
+        nullable: row.IS_NULLABLE === 'YES',
+        defaultValue: row.COLUMN_DEFAULT,
+        maxLength: row.CHARACTER_MAXIMUM_LENGTH,
+        precision: row.NUMERIC_PRECISION,
+        scale: row.NUMERIC_SCALE,
+        isAutoIncrement: row.EXTRA.includes('auto_increment'),
+        comment: row.COLUMN_COMMENT,
+      });
+      columnsByTable.set(row.TABLE_NAME, columns);
+    }
+
+    return columnsByTable;
   }
 
-  private async getIndexes(schemaName: string, tableName: string): Promise<IndexMetadata[]> {
+  private async getIndexesByTable(
+    schemaName: string,
+    tableNames: string[]
+  ): Promise<Map<string, IndexMetadata[]>> {
+    const placeholders = tableNames.map(() => '?').join(', ');
     const query = `
       SELECT
+        TABLE_NAME,
         INDEX_NAME,
         NON_UNIQUE,
         GROUP_CONCAT(COLUMN_NAME ORDER BY SEQ_IN_INDEX) AS column_names
       FROM information_schema.STATISTICS
-      WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?
-      GROUP BY INDEX_NAME, NON_UNIQUE
+      WHERE TABLE_SCHEMA = ? AND TABLE_NAME IN (${placeholders})
+      GROUP BY TABLE_NAME, INDEX_NAME, NON_UNIQUE
+      ORDER BY TABLE_NAME, INDEX_NAME
     `;
 
-    const [rows] = await this.pool!.query(query, [schemaName, tableName]);
+    const [rows] = await this.pool!.query(query, [schemaName, ...tableNames]);
+    const indexesByTable = new Map<string, IndexMetadata[]>();
 
-    return (rows as any[]).map((row) => ({
-      name: row.INDEX_NAME,
-      columns: row.column_names.split(','),
-      isUnique: row.NON_UNIQUE === 0,
-      isPrimary: row.INDEX_NAME === 'PRIMARY',
-    }));
+    for (const row of rows as any[]) {
+      const indexes = indexesByTable.get(row.TABLE_NAME) || [];
+      indexes.push({
+        name: row.INDEX_NAME,
+        columns: row.column_names.split(','),
+        isUnique: row.NON_UNIQUE === 0,
+        isPrimary: row.INDEX_NAME === 'PRIMARY',
+      });
+      indexesByTable.set(row.TABLE_NAME, indexes);
+    }
+
+    return indexesByTable;
   }
 
-  private async getForeignKeys(
+  private async getForeignKeysByTable(
     schemaName: string,
-    tableName: string
-  ): Promise<ForeignKeyMetadata[]> {
+    tableNames: string[]
+  ): Promise<Map<string, ForeignKeyMetadata[]>> {
+    const placeholders = tableNames.map(() => '?').join(', ');
     const query = `
       SELECT
+        kcu.TABLE_NAME,
         kcu.CONSTRAINT_NAME,
         GROUP_CONCAT(kcu.COLUMN_NAME ORDER BY kcu.ORDINAL_POSITION) AS column_names,
         kcu.REFERENCED_TABLE_SCHEMA,
@@ -193,23 +234,31 @@ export class MySQLAdapter extends BaseAdapter {
       JOIN information_schema.REFERENTIAL_CONSTRAINTS AS rc
         ON kcu.CONSTRAINT_NAME = rc.CONSTRAINT_NAME
         AND kcu.CONSTRAINT_SCHEMA = rc.CONSTRAINT_SCHEMA
-      WHERE kcu.TABLE_SCHEMA = ? AND kcu.TABLE_NAME = ?
+      WHERE kcu.TABLE_SCHEMA = ? AND kcu.TABLE_NAME IN (${placeholders})
         AND kcu.REFERENCED_TABLE_NAME IS NOT NULL
-      GROUP BY kcu.CONSTRAINT_NAME, kcu.REFERENCED_TABLE_SCHEMA,
+      GROUP BY kcu.TABLE_NAME, kcu.CONSTRAINT_NAME, kcu.REFERENCED_TABLE_SCHEMA,
                kcu.REFERENCED_TABLE_NAME, rc.UPDATE_RULE, rc.DELETE_RULE
+      ORDER BY kcu.TABLE_NAME, kcu.CONSTRAINT_NAME
     `;
 
-    const [rows] = await this.pool!.query(query, [schemaName, tableName]);
+    const [rows] = await this.pool!.query(query, [schemaName, ...tableNames]);
+    const foreignKeysByTable = new Map<string, ForeignKeyMetadata[]>();
 
-    return (rows as any[]).map((row) => ({
-      name: row.CONSTRAINT_NAME,
-      columns: row.column_names.split(','),
-      referencedSchema: row.REFERENCED_TABLE_SCHEMA,
-      referencedTable: row.REFERENCED_TABLE_NAME,
-      referencedColumns: row.referenced_columns.split(','),
-      onUpdate: row.UPDATE_RULE,
-      onDelete: row.DELETE_RULE,
-    }));
+    for (const row of rows as any[]) {
+      const foreignKeys = foreignKeysByTable.get(row.TABLE_NAME) || [];
+      foreignKeys.push({
+        name: row.CONSTRAINT_NAME,
+        columns: row.column_names.split(','),
+        referencedSchema: row.REFERENCED_TABLE_SCHEMA,
+        referencedTable: row.REFERENCED_TABLE_NAME,
+        referencedColumns: row.referenced_columns.split(','),
+        onUpdate: row.UPDATE_RULE,
+        onDelete: row.DELETE_RULE,
+      });
+      foreignKeysByTable.set(row.TABLE_NAME, foreignKeys);
+    }
+
+    return foreignKeysByTable;
   }
 
   async query(sql: string, params: any[] = [], timeoutMs?: number): Promise<QueryResult> {
@@ -220,11 +269,19 @@ export class MySQLAdapter extends BaseAdapter {
     try {
       connection = await this.pool!.getConnection();
 
-      const [rows, fields] = await connection.query({
-        sql,
-        values: params,
-        timeout: timeoutMs,
-      });
+      const [rows, fields] =
+        params.length > 0
+          ? await connection.execute(
+              {
+                sql,
+                timeout: timeoutMs,
+              },
+              params
+            )
+          : await connection.query({
+              sql,
+              timeout: timeoutMs,
+            });
 
       const executionTimeMs = Date.now() - startTime;
 
@@ -241,6 +298,70 @@ export class MySQLAdapter extends BaseAdapter {
     } finally {
       connection?.release();
     }
+  }
+
+  async streamQuery(
+    sql: string,
+    params: any[] = [],
+    timeoutMs: number | undefined,
+    handlers: QueryStreamHandlers
+  ): Promise<StreamQueryResult> {
+    this.ensureConnected();
+
+    return await new Promise((resolve, reject) => {
+      const startTime = Date.now();
+      const corePool = (this.pool as any).pool;
+      const query = corePool.query({
+        sql,
+        values: params,
+        timeout: timeoutMs,
+      });
+      const stream = query.stream({ highWaterMark: 100 });
+      let columns: string[] = [];
+      let rowCount = 0;
+      let settled = false;
+
+      const finishWithError = (error: any) => {
+        if (settled) return;
+        settled = true;
+        try {
+          this.handleError(error, 'streamQuery');
+        } catch (dbError) {
+          reject(dbError);
+        }
+      };
+
+      const finishWithResult = () => {
+        if (settled) return;
+        settled = true;
+        resolve({
+          columns,
+          rowCount,
+          executionTimeMs: Date.now() - startTime,
+        });
+      };
+
+      stream.on('fields', (fields: any[]) => {
+        stream.pause();
+        columns = Array.isArray(fields) ? fields.map((field) => field.name) : [];
+        Promise.resolve(handlers.onColumns?.(columns))
+          .then(() => stream.resume())
+          .catch((error) => stream.destroy(error instanceof Error ? error : new Error(String(error))));
+      });
+
+      stream.on('data', (row: any) => {
+        stream.pause();
+        Promise.resolve(handlers.onRow(row))
+          .then(() => {
+            rowCount++;
+            stream.resume();
+          })
+          .catch((error) => stream.destroy(error instanceof Error ? error : new Error(String(error))));
+      });
+
+      stream.once('end', finishWithResult);
+      stream.once('error', finishWithError);
+    });
   }
 
   async explain(sql: string, params: any[] = []): Promise<ExplainResult> {

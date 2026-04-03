@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { DatabaseManager } from './database-manager.js';
 import type { DatabaseConfig } from './types.js';
 
@@ -176,6 +176,57 @@ describe('DatabaseManager Security', () => {
       expect(schema.schema.schemas[0].tables[0].name).toBe('users');
       expect(status.ttlMinutes).toBe(10);
 
+      await manager.shutdown();
+    });
+
+    it('should skip auto-explain for fast read queries', async () => {
+      const manager = new DatabaseManager(mockConfig, {
+        cacheDir: '.test-cache',
+        cacheTtlMinutes: 10,
+        allowWrite: true,
+        disableDangerousOperations: false,
+      });
+
+      await manager.init();
+      await manager.runQuery('test-db', 'CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)');
+      await manager.runQuery('test-db', "INSERT INTO users VALUES (1, 'test')");
+
+      const adapter = (manager as any).adapters.get('test-db');
+      const explainSpy = vi.spyOn(adapter, 'explain');
+
+      await manager.runQuery('test-db', 'SELECT * FROM users');
+
+      expect(explainSpy).not.toHaveBeenCalled();
+      await manager.shutdown();
+    });
+
+    it('should still auto-explain slow read queries', async () => {
+      const manager = new DatabaseManager(mockConfig, {
+        cacheDir: '.test-cache',
+        cacheTtlMinutes: 10,
+        allowWrite: true,
+        disableDangerousOperations: false,
+      });
+
+      await manager.init();
+      await manager.runQuery('test-db', 'CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)');
+      await manager.runQuery('test-db', "INSERT INTO users VALUES (1, 'test')");
+
+      const adapter = (manager as any).adapters.get('test-db');
+      const originalQuery = adapter.query.bind(adapter);
+      const explainSpy = vi.spyOn(adapter, 'explain');
+
+      vi.spyOn(adapter, 'query').mockImplementation(async (sql: string, params?: any[], timeoutMs?: number) => {
+        const result = await originalQuery(sql, params, timeoutMs);
+        return {
+          ...result,
+          executionTimeMs: 1500,
+        };
+      });
+
+      await manager.runQuery('test-db', 'SELECT * FROM users');
+
+      expect(explainSpy).toHaveBeenCalledTimes(1);
       await manager.shutdown();
     });
   });
