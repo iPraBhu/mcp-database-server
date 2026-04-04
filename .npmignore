@@ -35,7 +35,6 @@ eslint.config.js
 
 # Documentation (keep README.md, exclude others)
 CONTRIBUTING.md
-PUBLISHING.md
 QUICKSTART.md
 ARCHITECTURE.md
 PROJECT_SUMMARY.md

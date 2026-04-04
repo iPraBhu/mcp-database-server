@@ -6,6 +6,7 @@ dist/
 .mcp-database-server.config
 .DS_Store
 coverage/
+.test-cache/
 *.db
 *.sqlite
 *.sqlite3
