@@ -1,4 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
+import { existsSync, rmSync } from 'fs';
+import { join } from 'path';
 import { DatabaseManager } from './database-manager.js';
 import { DatabaseError, type DatabaseConfig } from './types.js';
 
@@ -312,6 +314,54 @@ describe('DatabaseManager Security', () => {
       expect(explainSpy).not.toHaveBeenCalled();
       expect(trackSpy).not.toHaveBeenCalled();
       await manager.shutdown();
+    });
+
+    it('should persist file-backed SQLite writes across reconnects', async () => {
+      const dbPath = join(process.cwd(), '.test-cache', 'persisted-sqlite.db');
+      if (existsSync(dbPath)) {
+        rmSync(dbPath, { force: true });
+      }
+
+      const fileConfig: DatabaseConfig[] = [
+        {
+          id: 'file-db',
+          type: 'sqlite',
+          path: dbPath,
+          readOnly: false,
+        },
+      ];
+
+      const manager = new DatabaseManager(fileConfig, {
+        cacheDir: '.test-cache',
+        cacheTtlMinutes: 10,
+        allowWrite: true,
+        disableDangerousOperations: false,
+      });
+      const reloadedManager = new DatabaseManager(fileConfig, {
+        cacheDir: '.test-cache',
+        cacheTtlMinutes: 10,
+        allowWrite: true,
+        disableDangerousOperations: false,
+      });
+
+      try {
+        await manager.init();
+        await manager.runQuery('file-db', 'CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)');
+        await manager.runQuery('file-db', "INSERT INTO users VALUES (1, 'persisted')");
+        await manager.shutdown();
+
+        await reloadedManager.init();
+        const result = await reloadedManager.runQuery(
+          'file-db',
+          'SELECT id, name FROM users ORDER BY id'
+        );
+
+        expect(result.rows).toEqual([{ id: 1, name: 'persisted' }]);
+      } finally {
+        await manager.shutdown();
+        await reloadedManager.shutdown();
+        rmSync(dbPath, { force: true });
+      }
     });
   });
 });

@@ -65,7 +65,7 @@ This project was originally vibe-coded to solve real issues I was facing when wi
 |----------|--------|--------|-------|
 | PostgreSQL | `pg` | ✅ Full Support | Includes CockroachDB compatibility |
 | MySQL/MariaDB | `mysql2` | ✅ Full Support | Includes Amazon Aurora MySQL compatibility |
-| SQLite | `better-sqlite3` | ✅ Full Support | File-based databases |
+| SQLite | `sql.js` | ✅ Full Support | WASM-backed SQLite with file persistence |
 | SQL Server | `tedious` | ✅ Full Support | Microsoft SQL Server / Azure SQL |
 | Oracle | `oracledb` | ⚠️ Stub | Requires Oracle Instant Client |
 

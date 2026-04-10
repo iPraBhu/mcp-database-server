@@ -1,4 +1,6 @@
-import Database from 'better-sqlite3';
+import fs from 'fs/promises';
+import { dirname, resolve } from 'path';
+import initSqlJs from 'sql.js';
 import { BaseAdapter } from './base.js';
 import {
   DatabaseSchema,
@@ -13,24 +15,56 @@ import {
 } from '../types.js';
 import { generateSchemaVersion } from '../utils.js';
 
+type SqlJsModule = Awaited<ReturnType<typeof initSqlJs>>;
+type SqlJsDatabase = InstanceType<SqlJsModule['Database']>;
+type SqlJsStatement = ReturnType<SqlJsDatabase['prepare']>;
+
+let sqlJsModulePromise: Promise<SqlJsModule> | undefined;
+
+async function getSqlJsModule(): Promise<SqlJsModule> {
+  sqlJsModulePromise ??= initSqlJs();
+  return sqlJsModulePromise;
+}
+
 export class SQLiteAdapter extends BaseAdapter {
-  private db?: Database.Database;
+  private db?: SqlJsDatabase;
+  private dbPath?: string;
+  private fileBacked = false;
+  private dirty = false;
 
   async connect(): Promise<void> {
     try {
-      const dbPath = this._config.path || this._config.url;
-      if (!dbPath) {
+      const configuredPath = this._config.path || this._config.url;
+      if (!configuredPath) {
         throw new Error('SQLite requires path or url configuration');
       }
 
-      this.db = new Database(dbPath, {
-        readonly: this._config.readOnly,
-        fileMustExist: false,
-      });
+      const SQL = await getSqlJsModule();
+      const isInMemory = configuredPath === ':memory:';
+      const dbPath = isInMemory ? configuredPath : resolve(configuredPath);
+      let fileContents: Buffer | undefined;
 
-      // Enable foreign keys
-      this.db.pragma('foreign_keys = ON');
+      if (!isInMemory) {
+        try {
+          fileContents = await fs.readFile(dbPath);
+        } catch (error: any) {
+          if (error?.code !== 'ENOENT') {
+            throw error;
+          }
+          if (this._config.readOnly) {
+            throw new Error(`SQLite database file not found: ${dbPath}`);
+          }
+        }
+      }
 
+      this.db = fileContents
+        ? new SQL.Database(new Uint8Array(fileContents))
+        : new SQL.Database();
+      this.db.exec('PRAGMA foreign_keys = ON');
+
+      this.dbPath = dbPath;
+      this.fileBacked = !isInMemory;
+      this.dirty = false;
       this.connected = true;
       this.logger.info({ dbId: this._config.id, path: dbPath }, 'SQLite connected');
     } catch (error) {
@@ -39,9 +73,18 @@ export class SQLiteAdapter extends BaseAdapter {
   }
 
   async disconnect(): Promise<void> {
-    if (this.db) {
+    if (!this.db) {
+      return;
+    }
+
+    try {
+      await this.persistToDisk(true);
       this.db.close();
+    } finally {
       this.db = undefined;
+      this.dbPath = undefined;
+      this.fileBacked = false;
+      this.dirty = false;
       this.connected = false;
       this.logger.info({ dbId: this._config.id }, 'SQLite disconnected');
     }
@@ -96,9 +139,9 @@ export class SQLiteAdapter extends BaseAdapter {
       query += ` LIMIT ${options.maxTables}`;
     }
 
-    const tables = this.db!.prepare(query).all() as Array<{ name: string; type: string }>;
+    const { rows } = this.runReadStatement<Array<{ name: string; type: string }>>(query);
 
-    for (const table of tables) {
+    for (const table of rows) {
       const columns = await this.getColumns(table.name);
       const indexes = await this.getIndexes(table.name);
       const foreignKeys = await this.getForeignKeys(table.name);
@@ -120,16 +163,18 @@ export class SQLiteAdapter extends BaseAdapter {
   }
 
   private async getColumns(tableName: string): Promise<ColumnMetadata[]> {
-    const pragma = this.db!.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{
-      cid: number;
-      name: string;
-      type: string;
-      notnull: number;
-      dflt_value: string | null;
-      pk: number;
-    }>;
+    const { rows } = this.runReadStatement<
+      Array<{
+        cid: number;
+        name: string;
+        type: string;
+        notnull: number;
+        dflt_value: string | null;
+        pk: number;
+      }>
+    >(`PRAGMA table_info(${tableName})`);
 
-    return pragma.map((col) => ({
+    return rows.map((col) => ({
       name: col.name,
       dataType: col.type || 'TEXT',
       nullable: col.notnull === 0,
@@ -140,20 +185,22 @@ export class SQLiteAdapter extends BaseAdapter {
 
   private async getIndexes(tableName: string): Promise<IndexMetadata[]> {
     const result: IndexMetadata[] = [];
-
-    // Get all indexes
-    const indexes = this.db!.prepare(`PRAGMA index_list(${tableName})`).all() as Array<{
-      name: string;
-      unique: number;
-      origin: string;
-    }>;
+    const { rows: indexes } = this.runReadStatement<
+      Array<{
+        name: string;
+        unique: number;
+        origin: string;
+      }>
+    >(`PRAGMA index_list(${tableName})`);
 
     for (const index of indexes) {
-      const indexInfo = this.db!.prepare(`PRAGMA index_info(${index.name})`).all() as Array<{
-        seqno: number;
-        cid: number;
-        name: string;
-      }>;
+      const { rows: indexInfo } = this.runReadStatement<
+        Array<{
+          seqno: number;
+          cid: number;
+          name: string;
+        }>
+      >(`PRAGMA index_info(${index.name})`);
 
       result.push({
         name: index.name,
@@ -167,17 +214,18 @@ export class SQLiteAdapter extends BaseAdapter {
   }
 
   private async getForeignKeys(tableName: string): Promise<ForeignKeyMetadata[]> {
-    const foreignKeys = this.db!.prepare(`PRAGMA foreign_key_list(${tableName})`).all() as Array<{
-      id: number;
-      seq: number;
-      table: string;
-      from: string;
-      to: string;
-      on_update: string;
-      on_delete: string;
-    }>;
+    const { rows: foreignKeys } = this.runReadStatement<
+      Array<{
+        id: number;
+        seq: number;
+        table: string;
+        from: string;
+        to: string;
+        on_update: string;
+        on_delete: string;
+      }>
+    >(`PRAGMA foreign_key_list(${tableName})`);
 
-    // Group by FK id
     const grouped = new Map<number, typeof foreignKeys>();
     for (const fk of foreignKeys) {
       if (!grouped.has(fk.id)) {
@@ -197,39 +245,41 @@ export class SQLiteAdapter extends BaseAdapter {
     }));
   }
 
-  async query(sql: string, params: any[] = [], timeoutMs?: number): Promise<QueryResult> {
+  async query(sql: string, params: any[] = [], _timeoutMs?: number): Promise<QueryResult> {
     this.ensureConnected();
 
     const startTime = Date.now();
     try {
-      if (timeoutMs) {
-        this.db!.pragma(`busy_timeout = ${timeoutMs}`);
+      const stmt = this.prepareStatement(sql);
+      try {
+        const isSelect = sql.trim().toUpperCase().startsWith('SELECT');
+
+        if (isSelect) {
+          const { rows, columns } = this.collectRows(stmt, params);
+          return {
+            rows,
+            columns,
+            rowCount: rows.length,
+            executionTimeMs: Date.now() - startTime,
+            affectedRows: 0,
+          };
+        }
+
+        this.runStatement(stmt, params);
+        const affectedRows = this.db!.getRowsModified();
+        this.dirty = this.dirty || affectedRows > 0;
+        await this.persistToDisk();
+
+        return {
+          rows: [],
+          columns: [],
+          rowCount: 0,
+          executionTimeMs: Date.now() - startTime,
+          affectedRows,
+        };
+      } finally {
+        stmt.free();
       }
-
-      const stmt = this.db!.prepare(sql);
-      const isSelect = sql.trim().toUpperCase().startsWith('SELECT');
-
-      let rows: any[];
-      let affectedRows = 0;
-
-      if (isSelect) {
-        rows = stmt.all(...params);
-      } else {
-        const result = stmt.run(...params);
-        rows = [];
-        affectedRows = result.changes;
-      }
-
-      const executionTimeMs = Date.now() - startTime;
-      const columns = rows.length > 0 ? Object.keys(rows[0]) : [];
-
-      return {
-        rows,
-        columns,
-        rowCount: rows.length,
-        executionTimeMs,
-        affectedRows,
-      };
     } catch (error) {
       this.handleError(error, 'query');
     }
@@ -239,13 +289,10 @@ export class SQLiteAdapter extends BaseAdapter {
     this.ensureConnected();
 
     try {
-      const explainSql = `EXPLAIN QUERY PLAN ${sql}`;
-      const stmt = this.db!.prepare(explainSql);
-      const plan = stmt.all(...params);
-
+      const { rows } = this.runReadStatement(`EXPLAIN QUERY PLAN ${sql}`, params);
       return {
-        plan,
-        formattedPlan: JSON.stringify(plan, null, 2),
+        plan: rows,
+        formattedPlan: JSON.stringify(rows, null, 2),
       };
     } catch (error) {
       this.handleError(error, 'explain');
@@ -254,8 +301,15 @@ export class SQLiteAdapter extends BaseAdapter {
 
   async testConnection(): Promise<boolean> {
     try {
-      if (!this.db) return false;
-      this.db.prepare('SELECT 1').get();
+      if (!this.db) {
+        return false;
+      }
+      const stmt = this.db.prepare('SELECT 1');
+      try {
+        stmt.step();
+      } finally {
+        stmt.free();
+      }
       return true;
     } catch {
       return false;
@@ -265,12 +319,68 @@ export class SQLiteAdapter extends BaseAdapter {
   async getVersion(): Promise<string> {
     this.ensureConnected();
     try {
-      const result = this.db!.prepare('SELECT sqlite_version() as version').get() as {
-        version: string;
-      };
-      return `SQLite ${result.version}`;
+      const { rows } = this.runReadStatement<Array<{ version: string }>>(
+        'SELECT sqlite_version() as version'
+      );
+      return `SQLite ${rows[0].version}`;
     } catch (error) {
       this.handleError(error, 'getVersion');
     }
+  }
+
+  private prepareStatement(sql: string): SqlJsStatement {
+    return this.db!.prepare(sql);
+  }
+
+  private runReadStatement<TRows extends Array<Record<string, unknown>>>(
+    sql: string,
+    params: any[] = []
+  ): { rows: TRows; columns: string[] } {
+    const stmt = this.prepareStatement(sql);
+    try {
+      return this.collectRows<TRows>(stmt, params);
+    } finally {
+      stmt.free();
+    }
+  }
+
+  private collectRows<TRows extends Array<Record<string, unknown>>>(
+    stmt: SqlJsStatement,
+    params: any[] = []
+  ): { rows: TRows; columns: string[] } {
+    if (params.length > 0) {
+      stmt.bind(params);
+    }
+
+    const columns = stmt.getColumnNames();
+    const rows: Record<string, unknown>[] = [];
+
+    while (stmt.step()) {
+      rows.push(stmt.getAsObject() as Record<string, unknown>);
+    }
+
+    return {
+      rows: rows as TRows,
+      columns,
+    };
+  }
+
+  private runStatement(stmt: SqlJsStatement, params: any[] = []): void {
+    if (params.length > 0) {
+      stmt.run(params);
+      return;
+    }
+    stmt.run();
+  }
+
+  private async persistToDisk(force: boolean = false): Promise<void> {
+    if (!this.db || !this.fileBacked || this._config.readOnly || (!force && !this.dirty)) {
+      return;
+    }
+
+    await fs.mkdir(dirname(this.dbPath!), { recursive: true });
+    const data = this.db.export();
+    await fs.writeFile(this.dbPath!, Buffer.from(data));
+    this.dirty = false;
   }
 }
