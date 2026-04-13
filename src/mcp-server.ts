@@ -736,7 +736,7 @@ export class MCPServer {
 
     const format = args.format === 'csv' ? 'csv' : 'jsonl';
     const pageSize = args.pageSize !== undefined && args.pageSize > 0 ? Math.floor(args.pageSize) : 1000;
-    const exportDir = path.resolve(this._config.cache?.directory || '.sql-mcp-cache', 'exports');
+    const exportDir = path.resolve(this._dbManager.getCacheDir(), 'exports');
     await fsPromises.mkdir(exportDir, { recursive: true });
 
     const defaultFileName = `${args.dbId}-${Date.now()}.${format}`;

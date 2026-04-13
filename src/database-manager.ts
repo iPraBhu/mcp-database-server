@@ -81,6 +81,10 @@ export class DatabaseManager {
     return this._configs.find((c) => c.id === dbId);
   }
 
+  getCacheDir(): string {
+    return this.options.cacheDir;
+  }
+
   private getAdapter(dbId: string): DatabaseAdapter {
     const adapter = this.adapters.get(dbId);
     if (!adapter) {

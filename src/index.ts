@@ -10,6 +10,7 @@ import { loadConfig, findConfigFile } from './config.js';
 import { DatabaseManager } from './database-manager.js';
 import { MCPServer } from './mcp-server.js';
 import { initLogger, getLogger } from './logger.js';
+import { resolveConfigRelativePath } from './path-utils.js';
 
 // Load environment variables
 dotenv.config();
@@ -109,7 +110,9 @@ Examples:
 
     // Initialize database manager
     const dbManager = new DatabaseManager(config.databases, {
-      cacheDir: config.cache?.directory ? join(process.cwd(), config.cache.directory) : join(os.homedir(), '.sql-mcp-cache'),
+      cacheDir: config.cache?.directory
+        ? resolveConfigRelativePath(configPath, config.cache.directory)
+        : join(os.homedir(), '.sql-mcp-cache'),
       cacheTtlMinutes: config.cache?.ttlMinutes || 10,
       allowWrite: config.security?.allowWrite || false,
       allowedWriteOperations: config.security?.allowedWriteOperations,
