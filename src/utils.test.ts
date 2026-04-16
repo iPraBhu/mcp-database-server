@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import {
+  analyzeSqlSafety,
   redactUrl,
+  redactSensitiveText,
   interpolateEnv,
   extractTableNames,
   findJoinPaths,
@@ -33,6 +35,18 @@ describe('Utils', () => {
       const redacted = redactUrl(url);
       expect(redacted).not.toContain('password');
       expect(redacted).toContain('/***@');
+    });
+  });
+
+  describe('redactSensitiveText', () => {
+    it('should redact credentials embedded in messages', () => {
+      const message =
+        'failed using postgresql://user:secret123@localhost:5432/app and Password=TopSecret';
+      const redacted = redactSensitiveText(message);
+
+      expect(redacted).not.toContain('secret123');
+      expect(redacted).not.toContain('TopSecret');
+      expect(redacted).toContain('***');
     });
   });
 
@@ -101,6 +115,24 @@ describe('Utils', () => {
 
     it('should handle whitespace', () => {
       expect(isWriteOperation('  UPDATE users SET name = "test"')).toBe(true);
+    });
+
+    it('should treat writable CTEs as writes', () => {
+      expect(
+        isWriteOperation('WITH gone AS (DELETE FROM users) SELECT * FROM gone', 'postgres')
+      ).toBe(true);
+    });
+
+    it('should reject multi-statement batches from read-only classification', () => {
+      const analysis = analyzeSqlSafety('SELECT 1; DELETE FROM users', 'sqlite');
+
+      expect(analysis.isSingleStatement).toBe(false);
+      expect(analysis.isReadOnly).toBe(false);
+      expect(analysis.requiresWritePermissions).toBe(true);
+    });
+
+    it('should detect comment-prefixed writes', () => {
+      expect(isWriteOperation('/* audit */ DELETE FROM users', 'sqlite')).toBe(true);
     });
   });
 

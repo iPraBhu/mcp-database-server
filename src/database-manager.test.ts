@@ -129,7 +129,7 @@ describe('DatabaseManager Security', () => {
 
       await expect(
         manager.explainQuery('test-db', 'DELETE FROM users WHERE id = 1')
-      ).rejects.toThrow('Only read-only SELECT queries can be explained or profiled');
+      ).rejects.toThrow('Only single-statement read-only queries can be explained or profiled');
     });
 
     it('should block profiling on write statements', async () => {
@@ -142,7 +142,33 @@ describe('DatabaseManager Security', () => {
 
       await expect(
         manager.profileQueryPerformance('test-db', 'UPDATE users SET name = "x"')
-      ).rejects.toThrow('Only read-only SELECT queries can be explained or profiled');
+      ).rejects.toThrow('Only single-statement read-only queries can be explained or profiled');
+    });
+
+    it('should block multi-statement batches even when writes are allowed', async () => {
+      const manager = new DatabaseManager(mockConfig, {
+        cacheDir: '.test-cache',
+        cacheTtlMinutes: 10,
+        allowWrite: true,
+        disableDangerousOperations: false,
+      });
+
+      await expect(
+        manager.runQuery('test-db', 'SELECT 1; DELETE FROM users')
+      ).rejects.toThrow('Only single SQL statements are allowed.');
+    });
+
+    it('should block writable CTEs when writes are disabled', async () => {
+      const manager = new DatabaseManager(mockConfig, {
+        cacheDir: '.test-cache',
+        cacheTtlMinutes: 10,
+        allowWrite: false,
+        disableDangerousOperations: true,
+      });
+
+      await expect(
+        manager.runQuery('test-db', 'WITH gone AS (DELETE FROM users) SELECT * FROM gone')
+      ).rejects.toThrow('Write operations are not allowed');
     });
 
     it('should honor configured introspection options instead of treating maxTables as cache TTL', async () => {

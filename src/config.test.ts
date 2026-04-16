@@ -128,6 +128,31 @@ describe('findConfigFile', () => {
     expect(found).toBeNull();
   });
 
+  it('should not search above the detected project root', () => {
+    const parentDir = join(process.cwd(), 'test-config-discovery-parent');
+    const projectDir = join(parentDir, 'project');
+    const projectSubDir = join(projectDir, 'nested');
+    const parentConfig = join(parentDir, configFileName);
+    const packageJson = join(projectDir, 'package.json');
+
+    if (existsSync(parentDir)) {
+      rmSync(parentDir, { recursive: true, force: true });
+    }
+
+    try {
+      mkdirSync(projectSubDir, { recursive: true });
+      writeFileSync(parentConfig, '{"outside": true}');
+      writeFileSync(packageJson, '{"name": "test-project"}');
+
+      const found = findConfigFile(configFileName, projectSubDir);
+      expect(found).toBeNull();
+    } finally {
+      if (existsSync(parentDir)) {
+        rmSync(parentDir, { recursive: true, force: true });
+      }
+    }
+  });
+
   it('should work with default cwd', () => {
     const configPath = join(process.cwd(), configFileName);
     writeFileSync(configPath, '{}');
@@ -203,6 +228,26 @@ describe('loadConfig', () => {
     const config = await loadConfig(configPath);
 
     expect(config.databases[0].url).toBe('mysql://user:pass@localhost:3306/analytics');
+  });
+
+  it('should reject credentialCommand for auto-discovered configs', async () => {
+    writeFileSync(
+      configPath,
+      JSON.stringify({
+        databases: [
+          {
+            id: 'analytics',
+            type: 'mysql',
+            credentialCommand:
+              'node -e "process.stdout.write(\'mysql://user:pass@localhost:3306/analytics\')"',
+          },
+        ],
+      })
+    );
+
+    await expect(
+      loadConfig(configPath, { allowCredentialCommand: false })
+    ).rejects.toThrow('requires an explicit --config path for safety');
   });
 
   it('should reject multiple connection sources for the same database', async () => {

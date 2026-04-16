@@ -14,12 +14,13 @@ import { DatabaseManager } from './database-manager.js';
 import { ServerConfig } from './types.js';
 import { getLogger } from './logger.js';
 import {
+  analyzeSqlSafety,
   extractTableNames,
   formatCsvValue,
-  isReadOnlyQuery,
   limitRows,
   pushDownResultLimit,
   redactUrl,
+  redactSensitiveText,
   serializeCsvRow,
   trimRowsBySerializedSize,
 } from './utils.js';
@@ -448,13 +449,24 @@ export class MCPServer {
             throw new Error(`Unknown tool: ${name}`);
         }
       } catch (error: any) {
-        this.logger.error({ tool: name, error }, 'Tool execution failed');
+        const message = redactSensitiveText(error.message || 'Tool execution failed');
+        this.logger.error(
+          {
+            tool: name,
+            error: {
+              code: error.code,
+              message,
+              name: error.name,
+            },
+          },
+          'Tool execution failed'
+        );
         return {
           content: [
             {
               type: 'text',
               text: JSON.stringify({
-                error: error.message,
+                error: message,
                 code: error.code || 'TOOL_ERROR',
               }),
             },
@@ -626,6 +638,7 @@ export class MCPServer {
       paginationLimit !== undefined ? paginationLimit + 1 : paginationLimit;
     const includeMetadata = args.includeMetadata !== false;
     const trackQuery = args.trackQuery !== false;
+    const sqlAnalysis = analyzeSqlSafety(args.sql, config.type);
 
     const limitedQuery = pushDownResultLimit(args.sql, fetchLimit, config.type, paginationOffset);
     const rawResult = await this._dbManager.runQuery(
@@ -655,7 +668,7 @@ export class MCPServer {
     if (includeMetadata) {
       const queryStats = this._dbManager.getQueryStats(args.dbId);
       const referencedTables = new Set(extractTableNames(args.sql));
-      const includeRelationships = isReadOnlyQuery(args.sql) && referencedTables.size > 0;
+      const includeRelationships = sqlAnalysis.isReadOnly && referencedTables.size > 0;
       const relationships = includeRelationships
         ? (await this._dbManager.getSchema(args.dbId)).relationships.filter((r) =>
             referencedTables.has(`${r.fromSchema}.${r.fromTable}`.toLowerCase()) ||
@@ -961,7 +974,7 @@ export class MCPServer {
           return {
             dbId: config.id,
             healthy: false,
-            error: error.message,
+            error: redactSensitiveText(error.message || 'Health check failed'),
           };
         }
       })

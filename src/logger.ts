@@ -1,8 +1,14 @@
 import pino from 'pino';
 
 let logger: pino.Logger;
+let redactSecrets = true;
 
-export function initLogger(level: string = 'info', pretty: boolean = false) {
+export function initLogger(
+  level: string = 'info',
+  pretty: boolean = false,
+  redactSecretsEnabled: boolean = true
+) {
+  redactSecrets = redactSecretsEnabled;
   logger = pino(
     {
       level,
@@ -28,4 +34,8 @@ export function getLogger(): pino.Logger {
     logger = initLogger();
   }
   return logger;
+}
+
+export function shouldRedactSecrets(): boolean {
+  return redactSecrets;
 }

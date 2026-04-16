@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import fs from 'fs/promises';
+import path from 'path';
 import { SchemaCache } from '../src/cache.js';
 import { DatabaseSchema } from '../src/types.js';
 
@@ -131,5 +132,24 @@ describe('SchemaCache', () => {
     expect(entry!.relationships[0].type).toBe('foreign_key');
     expect(entry!.relationships[0].fromTable).toBe('orders');
     expect(entry!.relationships[0].toTable).toBe('users');
+  });
+
+  it('should encode database ids when persisting cache files', async () => {
+    const schema: DatabaseSchema = {
+      dbId: '../escape-attempt',
+      dbType: 'sqlite',
+      schemas: [],
+      introspectedAt: new Date(),
+      version: 'test-version',
+    };
+
+    await cache.set('../escape-attempt', schema);
+
+    const files = await fs.readdir(testCacheDir);
+    expect(files.some((file) => file.includes('..'))).toBe(false);
+    expect(files).toContain('%2E%2E%2Fescape-attempt.json');
+
+    const outsidePath = path.join(process.cwd(), 'escape-attempt.json');
+    await expect(fs.stat(outsidePath)).rejects.toBeTruthy();
   });
 });

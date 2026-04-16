@@ -241,8 +241,20 @@ export class SchemaCache {
     return `${rel.fromSchema}.${rel.fromTable}.${rel.fromColumns.join(',')}→${rel.toSchema}.${rel.toTable}.${rel.toColumns.join(',')}`;
   }
 
+  private encodeDbId(dbId: string): string {
+    return encodeURIComponent(dbId).replace(/\./g, '%2E');
+  }
+
+  private decodeDbId(fileName: string): string | null {
+    try {
+      return decodeURIComponent(fileName);
+    } catch {
+      return null;
+    }
+  }
+
   private getCacheFilePath(dbId: string): string {
-    return path.join(this._cacheDir, `${dbId}.json`);
+    return path.join(this._cacheDir, `${this.encodeDbId(dbId)}.json`);
   }
 
   private async loadFromDisk(dbId: string): Promise<CacheEntry | null> {
@@ -275,7 +287,8 @@ export class SchemaCache {
       const files = await fs.readdir(this._cacheDir);
       return files
         .filter((f) => f.endsWith('.json'))
-        .map((f) => f.replace('.json', ''));
+        .map((f) => this.decodeDbId(f.replace('.json', '')))
+        .filter((dbId): dbId is string => dbId !== null);
     } catch {
       return [];
     }

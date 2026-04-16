@@ -6,11 +6,52 @@ import { Relationship, DatabaseSchema, JoinPath, DatabaseType } from './types.js
 const { Parser } = sqlParserPkg;
 const sqlParser = new Parser();
 
-const LIMIT_PUSHDOWN_DIALECTS: Partial<Record<DatabaseType, string>> = {
+const SQL_DIALECTS: Partial<Record<DatabaseType, string>> = {
   mysql: 'MariaDB',
   postgres: 'Postgresql',
   sqlite: 'SQLite',
+  mssql: 'TransactSQL',
 };
+
+const LIMIT_PUSHDOWN_DIALECTS: Partial<Record<DatabaseType, string>> = {
+  mysql: SQL_DIALECTS.mysql,
+  postgres: SQL_DIALECTS.postgres,
+  sqlite: SQL_DIALECTS.sqlite,
+};
+
+const READ_ONLY_OPERATIONS = new Set([
+  'SELECT',
+  'SHOW',
+  'DESCRIBE',
+  'DESC',
+  'PRAGMA',
+  'EXPLAIN',
+]);
+
+const WRITE_OPERATIONS = new Set([
+  'INSERT',
+  'UPDATE',
+  'DELETE',
+  'CREATE',
+  'ALTER',
+  'DROP',
+  'TRUNCATE',
+  'REPLACE',
+  'MERGE',
+  'UPSERT',
+  'CALL',
+  'EXEC',
+  'EXECUTE',
+]);
+
+export interface SqlSafetyAnalysis {
+  normalizedSql: string;
+  operation: string;
+  isSingleStatement: boolean;
+  isReadOnly: boolean;
+  requiresWritePermissions: boolean;
+  parseSucceeded: boolean;
+}
 
 type ParsedLimitNode =
   | {
@@ -35,7 +76,6 @@ interface ParsedSelectAst {
  */
 export function redactUrl(url: string): string {
   try {
-    // Handle various URL formats
     if (url.includes('://')) {
       const urlObj = new URL(url);
       if (urlObj.password) {
@@ -45,22 +85,39 @@ export function redactUrl(url: string): string {
         return urlObj.toString();
       }
     }
-    
-    // Handle SQL Server connection strings
+
     if (url.includes('Password=')) {
       return url.replace(/(Password=)[^;]+/gi, '$1***');
     }
-    
-    // Handle Oracle connection strings
+
     if (url.includes('/') && url.includes('@')) {
       return url.replace(/\/[^@]+@/, '/***@');
     }
-    
+
     return url;
   } catch {
-    // If parsing fails, be safe and redact everything after ://
     return url.replace(/:\/\/[^@]*@/, '://***@');
   }
+}
+
+export function redactSensitiveText(value: string): string {
+  if (!value) {
+    return value;
+  }
+
+  let redacted = value.replace(
+    /\b[a-z][a-z0-9+.-]*:\/\/[^\s'",]+/gi,
+    (match) => redactUrl(match)
+  );
+
+  redacted = redacted.replace(/(Password=)[^;,\s]+/gi, '$1***');
+  redacted = redacted.replace(/(Pwd=)[^;,\s]+/gi, '$1***');
+  redacted = redacted.replace(
+    /\b([A-Za-z0-9_.-]+)\/([^@\s;]+)@([A-Za-z0-9_.-]+(?:[:/][^\s;]+)?)/g,
+    '$1/***@$3'
+  );
+
+  return redacted;
 }
 
 /**
@@ -72,34 +129,285 @@ export function interpolateEnv(value: string): string {
   });
 }
 
+function getParserDialect(dbType?: DatabaseType): string | undefined {
+  return dbType ? SQL_DIALECTS[dbType] : undefined;
+}
+
+function sanitizeSqlForInspection(sql: string): string {
+  let result = '';
+  let i = 0;
+  let mode:
+    | 'normal'
+    | 'single'
+    | 'double'
+    | 'backtick'
+    | 'bracket'
+    | 'line-comment'
+    | 'block-comment' = 'normal';
+
+  while (i < sql.length) {
+    const current = sql[i];
+    const next = sql[i + 1];
+
+    if (mode === 'line-comment') {
+      if (current === '\n') {
+        result += '\n';
+        mode = 'normal';
+      }
+      i++;
+      continue;
+    }
+
+    if (mode === 'block-comment') {
+      if (current === '*' && next === '/') {
+        mode = 'normal';
+        i += 2;
+      } else {
+        i++;
+      }
+      continue;
+    }
+
+    if (mode === 'single') {
+      if (current === "'" && next === "'") {
+        i += 2;
+        continue;
+      }
+      if (current === "'") {
+        mode = 'normal';
+      }
+      i++;
+      continue;
+    }
+
+    if (mode === 'double') {
+      if (current === '"' && next === '"') {
+        i += 2;
+        continue;
+      }
+      if (current === '"') {
+        mode = 'normal';
+      }
+      i++;
+      continue;
+    }
+
+    if (mode === 'backtick') {
+      if (current === '`' && next === '`') {
+        i += 2;
+        continue;
+      }
+      if (current === '`') {
+        mode = 'normal';
+      }
+      i++;
+      continue;
+    }
+
+    if (mode === 'bracket') {
+      if (current === ']' && next === ']') {
+        i += 2;
+        continue;
+      }
+      if (current === ']') {
+        mode = 'normal';
+      }
+      i++;
+      continue;
+    }
+
+    if (current === '-' && next === '-') {
+      result += ' ';
+      mode = 'line-comment';
+      i += 2;
+      continue;
+    }
+
+    if (current === '#') {
+      result += ' ';
+      mode = 'line-comment';
+      i++;
+      continue;
+    }
+
+    if (current === '/' && next === '*') {
+      result += ' ';
+      mode = 'block-comment';
+      i += 2;
+      continue;
+    }
+
+    if (current === "'") {
+      result += ' ';
+      mode = 'single';
+      i++;
+      continue;
+    }
+
+    if (current === '"') {
+      result += ' ';
+      mode = 'double';
+      i++;
+      continue;
+    }
+
+    if (current === '`') {
+      result += ' ';
+      mode = 'backtick';
+      i++;
+      continue;
+    }
+
+    if (current === '[') {
+      result += ' ';
+      mode = 'bracket';
+      i++;
+      continue;
+    }
+
+    result += current;
+    i++;
+  }
+
+  return result;
+}
+
+function normalizeSqlForInspection(sql: string): string {
+  return sanitizeSqlForInspection(sql).trim();
+}
+
+function hasInternalSemicolon(sql: string): boolean {
+  const trimmed = sql.replace(/[;\s]+$/g, '');
+  return trimmed.includes(';');
+}
+
+function getOperationFromAst(ast: any): string {
+  if (!ast || typeof ast !== 'object' || typeof ast.type !== 'string') {
+    return '';
+  }
+
+  return ast.type.toUpperCase();
+}
+
+function astContainsOperation(ast: unknown, operations: Set<string>): boolean {
+  if (Array.isArray(ast)) {
+    return ast.some((value) => astContainsOperation(value, operations));
+  }
+
+  if (!ast || typeof ast !== 'object') {
+    return false;
+  }
+
+  const record = ast as Record<string, unknown>;
+  if (typeof record.type === 'string' && operations.has(record.type.toUpperCase())) {
+    return true;
+  }
+
+  return Object.values(record).some((value) => astContainsOperation(value, operations));
+}
+
+function parseSql(
+  sql: string,
+  dbType?: DatabaseType
+): {
+  ast?: any;
+  parseSucceeded: boolean;
+  isSingleStatement: boolean;
+} {
+  const dialect = getParserDialect(dbType);
+
+  try {
+    const ast = dialect
+      ? sqlParser.astify(sql, { database: dialect })
+      : sqlParser.astify(sql);
+
+    if (Array.isArray(ast)) {
+      return {
+        parseSucceeded: true,
+        isSingleStatement: ast.length === 1,
+        ast: ast.length === 1 ? ast[0] : ast,
+      };
+    }
+
+    return {
+      ast,
+      parseSucceeded: true,
+      isSingleStatement: true,
+    };
+  } catch {
+    return {
+      parseSucceeded: false,
+      isSingleStatement: !hasInternalSemicolon(normalizeSqlForInspection(sql)),
+    };
+  }
+}
+
+export function analyzeSqlSafety(sql: string, dbType?: DatabaseType): SqlSafetyAnalysis {
+  const normalizedSql = normalizeSqlForInspection(sql);
+  const parsed = parseSql(sql, dbType);
+
+  if (parsed.parseSucceeded && parsed.ast && !Array.isArray(parsed.ast)) {
+    const operation = getOperationFromAst(parsed.ast);
+    const containsWrite = astContainsOperation(parsed.ast, WRITE_OPERATIONS);
+    const isReadOnly = READ_ONLY_OPERATIONS.has(operation) && !containsWrite;
+
+    return {
+      normalizedSql,
+      operation,
+      isSingleStatement: parsed.isSingleStatement,
+      isReadOnly,
+      requiresWritePermissions: !isReadOnly,
+      parseSucceeded: true,
+    };
+  }
+
+  const operationMatch = normalizedSql.match(/^([a-zA-Z]+)/);
+  const operation = operationMatch ? operationMatch[1].toUpperCase() : '';
+  const containsWriteKeyword = Array.from(WRITE_OPERATIONS).some((candidate) =>
+    new RegExp(`\\b${candidate}\\b`, 'i').test(normalizedSql)
+  );
+  const isReadOnly =
+    parsed.isSingleStatement &&
+    (operation === 'SELECT' || operation === 'WITH') &&
+    !containsWriteKeyword;
+
+  return {
+    normalizedSql,
+    operation,
+    isSingleStatement: parsed.isSingleStatement,
+    isReadOnly,
+    requiresWritePermissions: !isReadOnly,
+    parseSucceeded: parsed.parseSucceeded,
+  };
+}
+
 /**
  * Generate a stable version/ETag from schema content
  */
 export function generateSchemaVersion(schema: DatabaseSchema): string {
   const hash = crypto.createHash('sha256');
-  
-  // Create a stable representation of the schema
+
   const schemaData = {
     dbType: schema.dbType,
-    schemas: schema.schemas.map((s) => ({
-      name: s.name,
-      tables: s.tables
+    schemas: schema.schemas.map((schemaEntry) => ({
+      name: schemaEntry.name,
+      tables: schemaEntry.tables
         .sort((a, b) => a.name.localeCompare(b.name))
-        .map((t) => ({
-          name: t.name,
-          type: t.type,
-          columns: t.columns
+        .map((table) => ({
+          name: table.name,
+          type: table.type,
+          columns: table.columns
             .sort((a, b) => a.name.localeCompare(b.name))
-            .map((c) => ({
-              name: c.name,
-              dataType: c.dataType,
-              nullable: c.nullable,
+            .map((column) => ({
+              name: column.name,
+              dataType: column.dataType,
+              nullable: column.nullable,
             })),
-          foreignKeys: t.foreignKeys.sort((a, b) => a.name.localeCompare(b.name)),
+          foreignKeys: table.foreignKeys.sort((a, b) => a.name.localeCompare(b.name)),
         })),
     })),
   };
-  
+
   hash.update(JSON.stringify(schemaData));
   return hash.digest('hex').substring(0, 16);
 }
@@ -109,10 +417,9 @@ export function generateSchemaVersion(schema: DatabaseSchema): string {
  */
 export function inferRelationships(schema: DatabaseSchema): Relationship[] {
   const relationships: Relationship[] = [];
-  
-  // Build a lookup of tables and their primary keys
+
   const tableLookup = new Map<string, { schema: string; pk: string[] }>();
-  
+
   for (const schemaObj of schema.schemas) {
     for (const table of schemaObj.tables) {
       const fullName = `${schemaObj.name}.${table.name}`;
@@ -121,44 +428,39 @@ export function inferRelationships(schema: DatabaseSchema): Relationship[] {
       tableLookup.set(fullName.toLowerCase(), { schema: schemaObj.name, pk });
     }
   }
-  
-  // Look for FK patterns in each table
+
   for (const schemaObj of schema.schemas) {
     for (const table of schemaObj.tables) {
       for (const column of table.columns) {
         const columnName = column.name.toLowerCase();
-        
-        // Pattern 1: <table>_id or <table>Id
-        const patterns = [
-          /^(.+?)_id$/,
-          /^(.+?)id$/i,
-        ];
-        
+        const patterns = [/^(.+?)_id$/, /^(.+?)id$/i];
+
         for (const pattern of patterns) {
           const match = columnName.match(pattern);
-          if (match) {
-            const referencedTableName = match[1].toLowerCase();
-            const referencedTable = tableLookup.get(referencedTableName);
-            
-            if (referencedTable && referencedTable.pk.length > 0) {
-              // Only infer if we have a reasonable confidence
-              relationships.push({
-                fromSchema: schemaObj.name,
-                fromTable: table.name,
-                fromColumns: [column.name],
-                toSchema: referencedTable.schema,
-                toTable: referencedTableName,
-                toColumns: referencedTable.pk,
-                type: 'inferred',
-                confidence: 0.7,
-              });
-            }
+          if (!match) {
+            continue;
+          }
+
+          const referencedTableName = match[1].toLowerCase();
+          const referencedTable = tableLookup.get(referencedTableName);
+
+          if (referencedTable && referencedTable.pk.length > 0) {
+            relationships.push({
+              fromSchema: schemaObj.name,
+              fromTable: table.name,
+              fromColumns: [column.name],
+              toSchema: referencedTable.schema,
+              toTable: referencedTableName,
+              toColumns: referencedTable.pk,
+              type: 'inferred',
+              confidence: 0.7,
+            });
           }
         }
       }
     }
   }
-  
+
   return relationships;
 }
 
@@ -167,14 +469,11 @@ export function inferRelationships(schema: DatabaseSchema): Relationship[] {
  */
 export function extractTableNames(sql: string): string[] {
   const tables = new Set<string>();
-  
-  // Simple regex-based extraction (best effort)
-  // Matches: FROM table, JOIN table, INTO table, UPDATE table, DELETE FROM table
   const patterns = [
     /(?:FROM|JOIN|INTO|UPDATE)\s+([a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_][a-zA-Z0-9_]*)?)/gi,
     /DELETE\s+FROM\s+([a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_][a-zA-Z0-9_]*)?)/gi,
   ];
-  
+
   for (const pattern of patterns) {
     const matches = sql.matchAll(pattern);
     for (const match of matches) {
@@ -183,49 +482,23 @@ export function extractTableNames(sql: string): string[] {
       }
     }
   }
-  
+
   return Array.from(tables);
 }
 
 /**
  * Detect if SQL is a write operation
  */
-export function isWriteOperation(sql: string): boolean {
-  const upperSql = sql.trim().toUpperCase();
-  const writeKeywords = [
-    'INSERT',
-    'UPDATE',
-    'DELETE',
-    'CREATE',
-    'ALTER',
-    'DROP',
-    'TRUNCATE',
-    'REPLACE',
-    'MERGE',
-  ];
-  
-  for (const keyword of writeKeywords) {
-    if (upperSql.startsWith(keyword)) {
-      return true;
-    }
-  }
-  
-  return false;
+export function isWriteOperation(sql: string, dbType?: DatabaseType): boolean {
+  return analyzeSqlSafety(sql, dbType).requiresWritePermissions;
 }
 
-export function getSqlOperation(sql: string): string {
-  const normalizedSql = sql
-    .replace(/\/\*[\s\S]*?\*\//g, ' ')
-    .replace(/--.*$/gm, ' ')
-    .trim();
-
-  const match = normalizedSql.match(/^([a-zA-Z]+)/);
-  return match ? match[1].toUpperCase() : '';
+export function getSqlOperation(sql: string, dbType?: DatabaseType): string {
+  return analyzeSqlSafety(sql, dbType).operation;
 }
 
-export function isReadOnlyQuery(sql: string): boolean {
-  const operation = getSqlOperation(sql);
-  return operation === 'SELECT' || operation === 'WITH';
+export function isReadOnlyQuery(sql: string, dbType?: DatabaseType): boolean {
+  return analyzeSqlSafety(sql, dbType).isReadOnly;
 }
 
 export function pushDownResultLimit(
@@ -240,7 +513,7 @@ export function pushDownResultLimit(
     limit < 0 ||
     !Number.isFinite(offset) ||
     offset < 0 ||
-    !isReadOnlyQuery(sql)
+    !isReadOnlyQuery(sql, dbType)
   ) {
     return { sql, applied: false };
   }
@@ -326,7 +599,6 @@ export function findJoinPaths(
     return [];
   }
 
-  // Build adjacency list
   const graph = new Map<string, Relationship[]>();
   const nodeKeys = new Set<string>();
 
@@ -342,7 +614,6 @@ export function findJoinPaths(
     }
     graph.get(fromKey)!.push(rel);
 
-    // Reverse direction
     const reverseRel: Relationship = {
       ...rel,
       fromSchema: rel.toSchema,
@@ -352,7 +623,7 @@ export function findJoinPaths(
       toTable: rel.fromTable,
       toColumns: rel.fromColumns,
     };
-    
+
     if (!graph.has(toKey)) {
       graph.set(toKey, []);
     }
@@ -368,7 +639,10 @@ export function findJoinPaths(
     return Array.from(nodeKeys).filter((key) => key.endsWith(`.${normalized}`));
   };
 
-  const bfs = (starts: string[], ends: string[]): { target: string; path: Relationship[] } | null => {
+  const bfs = (
+    starts: string[],
+    ends: string[]
+  ): { target: string; path: Relationship[] } | null => {
     const endSet = new Set(ends);
     const queue: Array<{ current: string; path: Relationship[] }> = starts.map((current) => ({
       current,

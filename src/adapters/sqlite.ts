@@ -163,6 +163,7 @@ export class SQLiteAdapter extends BaseAdapter {
   }
 
   private async getColumns(tableName: string): Promise<ColumnMetadata[]> {
+    const safeTableName = this.quoteIdentifier(tableName);
     const { rows } = this.runReadStatement<
       Array<{
         cid: number;
@@ -172,7 +173,7 @@ export class SQLiteAdapter extends BaseAdapter {
         dflt_value: string | null;
         pk: number;
       }>
-    >(`PRAGMA table_info(${tableName})`);
+    >(`PRAGMA table_info(${safeTableName})`);
 
     return rows.map((col) => ({
       name: col.name,
@@ -185,22 +186,24 @@ export class SQLiteAdapter extends BaseAdapter {
 
   private async getIndexes(tableName: string): Promise<IndexMetadata[]> {
     const result: IndexMetadata[] = [];
+    const safeTableName = this.quoteIdentifier(tableName);
     const { rows: indexes } = this.runReadStatement<
       Array<{
         name: string;
         unique: number;
         origin: string;
       }>
-    >(`PRAGMA index_list(${tableName})`);
+    >(`PRAGMA index_list(${safeTableName})`);
 
     for (const index of indexes) {
+      const safeIndexName = this.quoteIdentifier(index.name);
       const { rows: indexInfo } = this.runReadStatement<
         Array<{
           seqno: number;
           cid: number;
           name: string;
         }>
-      >(`PRAGMA index_info(${index.name})`);
+      >(`PRAGMA index_info(${safeIndexName})`);
 
       result.push({
         name: index.name,
@@ -214,6 +217,7 @@ export class SQLiteAdapter extends BaseAdapter {
   }
 
   private async getForeignKeys(tableName: string): Promise<ForeignKeyMetadata[]> {
+    const safeTableName = this.quoteIdentifier(tableName);
     const { rows: foreignKeys } = this.runReadStatement<
       Array<{
         id: number;
@@ -224,7 +228,7 @@ export class SQLiteAdapter extends BaseAdapter {
         on_update: string;
         on_delete: string;
       }>
-    >(`PRAGMA foreign_key_list(${tableName})`);
+    >(`PRAGMA foreign_key_list(${safeTableName})`);
 
     const grouped = new Map<number, typeof foreignKeys>();
     for (const fk of foreignKeys) {
@@ -371,6 +375,10 @@ export class SQLiteAdapter extends BaseAdapter {
       return;
     }
     stmt.run();
+  }
+
+  private quoteIdentifier(value: string): string {
+    return `"${value.replace(/"/g, '""')}"`;
   }
 
   private async persistToDisk(force: boolean = false): Promise<void> {

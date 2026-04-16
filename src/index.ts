@@ -100,10 +100,16 @@ Examples:
       }
     }
     
-    const config = await loadConfig(configPath);
+    const config = await loadConfig(configPath, {
+      allowCredentialCommand: Boolean(values.config),
+    });
 
     // Initialize logger
-    initLogger(config.logging?.level || 'info', config.logging?.pretty || false);
+    initLogger(
+      config.logging?.level || 'info',
+      config.logging?.pretty || false,
+      config.security?.redactSecrets ?? true
+    );
     const logger = getLogger();
 
     logger.info({ configPath }, 'Configuration loaded');

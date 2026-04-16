@@ -103,7 +103,7 @@ node dist/index.js --config ./.mcp-database-server.config
 
 Create a `.mcp-database-server.config` file in your project root:
 
-> **Note:** The config file is automatically discovered! If you don't specify `--config`, the tool first tries to locate your project root (by looking for `package.json`, `.git`, etc.) and searches for `.mcp-database-server.config` starting from there and moving up. If no project root is found, it searches from the current directory. This means you can run the tool from any subdirectory of your project and it will find the config file.
+> **Note:** The config file is automatically discovered inside the current project tree. If you don't specify `--config`, the tool searches upward from the current directory until it reaches the detected project root (for example a directory containing `package.json` or `.git`). It does not continue past the project root. If you use `credentialCommand`, pass `--config` explicitly.
 
 ```json
 {
@@ -170,7 +170,7 @@ Each database in the `databases` array represents a connection to a SQL database
 | `type` | enum | ✅ Yes | - | Database system type. Valid values: `postgres`, `mysql`, `sqlite`, `mssql`, `oracle` |
 | `url` | string | Conditional* | - | Explicit database connection string. Supports environment variable interpolation with `${DB_URL}` but is not the recommended secret-handling path. |
 | `secretRef` | string | Conditional* | - | Name of an environment variable that contains the full connection string. Resolved from the process environment or a `.env` file beside the config file. |
-| `credentialCommand` | string | Conditional* | - | Shell command that prints the full connection string to stdout at startup. Useful for 1Password, Vault, AWS helpers, or custom secret tooling. |
+| `credentialCommand` | string | Conditional* | - | Shell command that prints the full connection string to stdout at startup. Useful for 1Password, Vault, AWS helpers, or custom secret tooling. Requires launching the server with an explicit `--config` path. |
 | `path` | string | Conditional** | - | Filesystem path to SQLite database file. Required only for `type: sqlite`. Can be relative or absolute. |
 | `readOnly` | boolean | No | `true` | When `true`, blocks all write operations (INSERT, UPDATE, DELETE, etc.). Recommended for production safety. |
 | `eagerConnect` | boolean | No | `false` | When `true`, connects to database immediately at startup (fail-fast). When `false`, connects on first query (lazy loading). |
@@ -250,7 +250,7 @@ Comprehensive security controls to protect your databases from unauthorized or d
 | `allowWrite` | boolean | No | `false` | Master switch for write operations. When `false`, all writes are blocked across all databases. |
 | `allowedWriteOperations` | string[] | No | all | Whitelist of allowed SQL operations when `allowWrite: true`. Valid values: `INSERT`, `UPDATE`, `DELETE`, `CREATE`, `ALTER`, `DROP`, `TRUNCATE`, `REPLACE`, `MERGE` |
 | `disableDangerousOperations` | boolean | No | `true` | **Extra safety layer.** When `true`, blocks `DELETE`, `TRUNCATE`, and `DROP` operations even if writes are allowed. Prevents accidental data loss. |
-| `redactSecrets` | boolean | No | `true` | Automatically redact passwords and credentials in logs and error messages. |
+| `redactSecrets` | boolean | No | `true` | Redact connection strings, passwords, and similar credentials in logs and returned error messages. |
 
 **Security Layers (Evaluated in Order):**
 
@@ -410,6 +410,7 @@ DB_URL_MSSQL=Server=host,1433;Database=db;User Id=sa;Password=pass
 ```
 
 The command must print only the connection string to stdout.
+For safety, `credentialCommand` is only allowed when the server is launched with an explicit `--config` path. Auto-discovered configs cannot execute credential commands.
 
 **Still Supported: direct env interpolation**
 

@@ -7,7 +7,8 @@ import {
   IntrospectionOptions,
   DatabaseError,
 } from '../types.js';
-import { getLogger } from '../logger.js';
+import { getLogger, shouldRedactSecrets } from '../logger.js';
+import { redactSensitiveText } from '../utils.js';
 
 export abstract class BaseAdapter implements DatabaseAdapter {
   protected logger = getLogger();
@@ -38,9 +39,25 @@ export abstract class BaseAdapter implements DatabaseAdapter {
   }
 
   protected handleError(error: any, operation: string): never {
-    this.logger.error({ error, dbId: this._config.id, operation }, 'Database operation failed');
+    const message =
+      typeof error?.message === 'string' && shouldRedactSecrets()
+        ? redactSensitiveText(error.message)
+        : error?.message || 'Unknown database error';
+
+    this.logger.error(
+      {
+        error: {
+          code: error?.code,
+          message,
+          name: error?.name,
+        },
+        dbId: this._config.id,
+        operation,
+      },
+      'Database operation failed'
+    );
     throw new DatabaseError(
-      `${operation} failed: ${error.message}`,
+      `${operation} failed: ${message}`,
       error.code || 'UNKNOWN_ERROR',
       this._config.id,
       error

@@ -10,11 +10,10 @@ import { createAdapter } from './adapters/index.js';
 import { SchemaCache, CacheEntry } from './cache.js';
 import { QueryTracker } from './query-tracker.js';
 import {
+  analyzeSqlSafety,
   extractTableNames,
-  isWriteOperation,
   findJoinPaths,
-  getSqlOperation,
-  isReadOnlyQuery,
+  redactSensitiveText,
 } from './utils.js';
 import { getLogger } from './logger.js';
 
@@ -227,9 +226,9 @@ export class DatabaseManager {
     includeSchemaContext: boolean = true,
     trackQuery: boolean = true
   ): Promise<QueryResult> {
-    this.validateQueryAccess(dbId, sql, 'execute');
-    const writeOperation = isWriteOperation(sql);
-    const readOnlyQuery = isReadOnlyQuery(sql);
+    const sqlAnalysis = this.validateQueryAccess(dbId, sql, 'execute');
+    const writeOperation = sqlAnalysis.requiresWritePermissions;
+    const readOnlyQuery = sqlAnalysis.isReadOnly;
     const referencedTables = readOnlyQuery ? extractTableNames(sql) : [];
 
     // Ensure schema is cached (for relationship annotation)
@@ -278,7 +277,7 @@ export class DatabaseManager {
     } catch (error: any) {
       // Track error
       if (trackQuery) {
-        this.queryTracker.track(dbId, sql, 0, 0, error.message);
+        this.queryTracker.track(dbId, sql, 0, 0, redactSensitiveText(error.message));
       }
       throw error;
     }
@@ -385,17 +384,22 @@ export class DatabaseManager {
     dbId: string,
     sql: string,
     mode: 'execute' | 'analyze'
-  ): void {
+  ) {
     const config = this.getConfig(dbId);
-    const operation = getSqlOperation(sql);
+    const sqlAnalysis = analyzeSqlSafety(sql, config?.type);
+    const operation = sqlAnalysis.operation;
     const dangerousOps = ['DELETE', 'TRUNCATE', 'DROP'];
 
-    if (mode === 'analyze' && !isReadOnlyQuery(sql)) {
-      throw new Error('Only read-only SELECT queries can be explained or profiled.');
+    if (!sqlAnalysis.isSingleStatement) {
+      throw new Error('Only single SQL statements are allowed.');
     }
 
-    if (!isWriteOperation(sql)) {
-      return;
+    if (mode === 'analyze' && !sqlAnalysis.isReadOnly) {
+      throw new Error('Only single-statement read-only queries can be explained or profiled.');
+    }
+
+    if (!sqlAnalysis.requiresWritePermissions) {
+      return sqlAnalysis;
     }
 
     if (!this.options.allowWrite) {
@@ -418,5 +422,7 @@ export class DatabaseManager {
         throw new Error(`Write operation ${operation} is not allowed.`);
       }
     }
+
+    return sqlAnalysis;
   }
 }

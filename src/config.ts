@@ -9,6 +9,10 @@ import { interpolateEnv } from './utils.js';
 
 const execAsync = promisify(exec);
 
+interface LoadConfigOptions {
+  allowCredentialCommand?: boolean;
+}
+
 /**
  * Find project root by looking for common project markers
  * @param startDir - Directory to start searching from (defaults to cwd)
@@ -46,16 +50,11 @@ export function findProjectRoot(startDir: string = process.cwd()): string | null
  * @returns Absolute path to config file or null if not found
  */
 export function findConfigFile(fileName: string, startDir: string = process.cwd()): string | null {
-  // First try to find project root and search from there
   const projectRoot = findProjectRoot(startDir);
   if (projectRoot) {
-    const configFromProjectRoot = findConfigFileFromDir(fileName, projectRoot);
-    if (configFromProjectRoot) {
-      return configFromProjectRoot;
-    }
+    return findConfigFileFromDir(fileName, startDir, projectRoot);
   }
 
-  // Fallback to searching from the original start directory
   return findConfigFileFromDir(fileName, startDir);
 }
 
@@ -65,14 +64,23 @@ export function findConfigFile(fileName: string, startDir: string = process.cwd(
  * @param startDir - Directory to start searching from
  * @returns Absolute path to config file or null if not found
  */
-function findConfigFileFromDir(fileName: string, startDir: string): string | null {
+function findConfigFileFromDir(
+  fileName: string,
+  startDir: string,
+  stopDir?: string
+): string | null {
   let currentDir = resolve(startDir);
+  const resolvedStopDir = stopDir ? resolve(stopDir) : undefined;
 
   while (true) {
     const configPath = join(currentDir, fileName);
     
     if (existsSync(configPath)) {
       return configPath;
+    }
+
+    if (resolvedStopDir && currentDir === resolvedStopDir) {
+      break;
     }
 
     const parentDir = dirname(currentDir);
@@ -89,7 +97,10 @@ function findConfigFileFromDir(fileName: string, startDir: string): string | nul
   return null;
 }
 
-export async function loadConfig(configPath: string): Promise<ServerConfig> {
+export async function loadConfig(
+  configPath: string,
+  options: LoadConfigOptions = {}
+): Promise<ServerConfig> {
   try {
     loadConfigEnvironment(configPath);
 
@@ -101,7 +112,10 @@ export async function loadConfig(configPath: string): Promise<ServerConfig> {
 
     // Validate with Zod
     const config = ServerConfigSchema.parse(interpolatedConfig);
-    const resolvedConfig = await resolveDatabaseConnectionSources(config);
+    const resolvedConfig = await resolveDatabaseConnectionSources(
+      config,
+      options.allowCredentialCommand ?? true
+    );
 
     // Additional validation
     validateDatabaseConfigs(resolvedConfig);
@@ -147,7 +161,10 @@ function interpolateConfigValues(obj: any): any {
   return obj;
 }
 
-async function resolveDatabaseConnectionSources(config: ServerConfig): Promise<ServerConfig> {
+async function resolveDatabaseConnectionSources(
+  config: ServerConfig,
+  allowCredentialCommand: boolean
+): Promise<ServerConfig> {
   const databases = await Promise.all(
     config.databases.map(async (db) => {
       const connectionSources = [
@@ -196,6 +213,12 @@ async function resolveDatabaseConnectionSources(config: ServerConfig): Promise<S
       }
 
       if (db.credentialCommand) {
+        if (!allowCredentialCommand) {
+          throw new ConfigError(
+            `Database ${db.id} uses credentialCommand, which requires an explicit --config path for safety.`
+          );
+        }
+
         const resolvedCredential = await runCredentialCommand(db.id, db.credentialCommand);
         return {
           ...db,

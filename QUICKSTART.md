@@ -129,7 +129,7 @@ If you want to run directly from source instead of installing from npm:
 }
 ```
 
-> **Note:** The `--config` argument is optional. If omitted, the server will automatically search for `.mcp-database-server.config` starting from your project root (detected by looking for `package.json`, `.git`, etc.) and moving up through parent directories.
+> **Note:** The `--config` argument is optional. If omitted, the server will search upward from the current directory until it reaches the detected project root. If you use `credentialCommand`, pass `--config` explicitly.
 
 ### Other MCP Clients
 
@@ -166,6 +166,8 @@ Use run_query with:
 - includeMetadata: false
 - trackQuery: false
 ```
+
+Queries must be a single SQL statement. Batches such as `SELECT 1; DELETE FROM users` are rejected.
 
 ### 4. Get Join Suggestions
 

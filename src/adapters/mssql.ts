@@ -45,7 +45,7 @@ export class MSSQLAdapter extends BaseAdapter {
     const config: any = {
       options: {
         encrypt: true,
-        trustServerCertificate: true,
+        trustServerCertificate: false,
         enableArithAbort: true,
       },
     };
@@ -212,12 +212,12 @@ export class MSSQLAdapter extends BaseAdapter {
     const tablesQuery = `
       SELECT TABLE_NAME, TABLE_TYPE
       FROM INFORMATION_SCHEMA.TABLES
-      WHERE TABLE_SCHEMA = '${schemaName}' AND TABLE_TYPE IN (${tableTypes})
+      WHERE TABLE_SCHEMA = ? AND TABLE_TYPE IN (${tableTypes})
       ORDER BY TABLE_NAME
       ${options?.maxTables ? `OFFSET 0 ROWS FETCH NEXT ${options.maxTables} ROWS ONLY` : ''}
     `;
 
-    const tablesResult = await this.executeQuery(tablesQuery);
+    const tablesResult = await this.executeQuery(tablesQuery, [schemaName]);
 
     for (const row of tablesResult) {
       const columns = await this.getColumns(schemaName, row.TABLE_NAME);
@@ -252,11 +252,11 @@ export class MSSQLAdapter extends BaseAdapter {
         NUMERIC_SCALE,
         COLUMNPROPERTY(OBJECT_ID(TABLE_SCHEMA + '.' + TABLE_NAME), COLUMN_NAME, 'IsIdentity') AS IS_IDENTITY
       FROM INFORMATION_SCHEMA.COLUMNS
-      WHERE TABLE_SCHEMA = '${schemaName}' AND TABLE_NAME = '${tableName}'
+      WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?
       ORDER BY ORDINAL_POSITION
     `;
 
-    const result = await this.executeQuery(query);
+    const result = await this.executeQuery(query, [schemaName, tableName]);
 
     return result.map((row) => ({
       name: row.COLUMN_NAME,
@@ -282,11 +282,11 @@ export class MSSQLAdapter extends BaseAdapter {
       INNER JOIN sys.columns c ON ic.object_id = c.object_id AND ic.column_id = c.column_id
       INNER JOIN sys.tables t ON i.object_id = t.object_id
       INNER JOIN sys.schemas s ON t.schema_id = s.schema_id
-      WHERE s.name = '${schemaName}' AND t.name = '${tableName}'
+      WHERE s.name = ? AND t.name = ?
       GROUP BY i.name, i.is_unique, i.is_primary_key
     `;
 
-    const result = await this.executeQuery(query);
+    const result = await this.executeQuery(query, [schemaName, tableName]);
 
     return result.map((row) => ({
       name: row.index_name,
@@ -317,11 +317,11 @@ export class MSSQLAdapter extends BaseAdapter {
       INNER JOIN sys.schemas s ON t.schema_id = s.schema_id
       INNER JOIN sys.tables rt ON fk.referenced_object_id = rt.object_id
       INNER JOIN sys.schemas rs ON rt.schema_id = rs.schema_id
-      WHERE s.name = '${schemaName}' AND t.name = '${tableName}'
+      WHERE s.name = ? AND t.name = ?
       GROUP BY fk.name, rs.name, rt.name, fk.update_referential_action_desc, fk.delete_referential_action_desc
     `;
 
-    const result = await this.executeQuery(query);
+    const result = await this.executeQuery(query, [schemaName, tableName]);
 
     return result.map((row) => ({
       name: row.constraint_name,
