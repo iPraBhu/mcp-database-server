@@ -9,22 +9,22 @@ export function initLogger(
   redactSecretsEnabled: boolean = true
 ) {
   redactSecrets = redactSecretsEnabled;
-  logger = pino(
-    {
-      level,
-      transport: pretty
-        ? {
-            target: 'pino-pretty',
-            options: {
-              colorize: true,
-              translateTime: 'SYS:standard',
-              ignore: 'pid,hostname',
-            },
-          }
-        : undefined,
-    },
-    pino.destination({ dest: 2, sync: false }) // Write to stderr (fd 2) for MCP protocol compatibility
-  );
+  // IMPORTANT: MCP uses stdout for JSON-RPC. Any logging to stdout can corrupt the protocol stream.
+  // Always direct logs to stderr (fd 2), including pretty-print output.
+  if (pretty) {
+    const transport = pino.transport({
+      target: 'pino-pretty',
+      options: {
+        colorize: true,
+        translateTime: 'SYS:standard',
+        ignore: 'pid,hostname',
+        destination: 2,
+      },
+    });
+    logger = pino({ level }, transport);
+  } else {
+    logger = pino({ level }, pino.destination({ dest: 2, sync: false }));
+  }
   
   return logger;
 }
