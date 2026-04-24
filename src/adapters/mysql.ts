@@ -21,13 +21,14 @@ export class MySQLAdapter extends BaseAdapter {
 
   async connect(): Promise<void> {
     try {
-      const connectionLimit = this._config.pool?.max || 10;
+      const connectionLimit = this._config.pool?.max || 5;
+      const minIdle = this._config.pool?.min ?? 1;
       this.pool = mysql.createPool({
         uri: this._config.url,
         waitForConnections: true,
         connectionLimit,
-        maxIdle: connectionLimit,
-        idleTimeout: this._config.pool?.idleTimeoutMillis || 60000,
+        maxIdle: minIdle,
+        idleTimeout: this._config.pool?.idleTimeoutMillis || 30000,
         queueLimit: 0,
         connectTimeout: this._config.pool?.connectionTimeoutMillis || 10000,
         enableKeepAlive: true,
